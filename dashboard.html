@@ -1,0 +1,1332 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MC Server Monitor</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Syne:wght@400;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg: #0d0f14;
+    --bg2: #13161e;
+    --bg3: #1a1e28;
+    --bg4: #222736;
+    --border: rgba(255,255,255,0.07);
+    --border2: rgba(255,255,255,0.12);
+    --text: #e8eaf0;
+    --muted: #7a7f94;
+    --accent: #4ade80;
+    --accent2: #22d3ee;
+    --danger: #f87171;
+    --warn: #fbbf24;
+    --totem: #a78bfa;
+    --elytra: #38bdf8;
+    --region: #fb923c;
+  }
+
+  body { font-family: 'Syne', sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; }
+
+  header {
+    background: var(--bg2);
+    border-bottom: 1px solid var(--border);
+    padding: 0 2rem;
+    height: 56px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    position: sticky;
+    top: 0;
+    z-index: 1000;
+  }
+
+  .logo {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 15px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    color: var(--accent);
+  }
+
+  .logo-icon {
+    width: 28px; height: 28px;
+    background: var(--accent);
+    border-radius: 6px;
+    display: flex; align-items: center; justify-content: center;
+  }
+
+  .logo-icon svg { width: 16px; height: 16px; }
+
+  .nav-tabs { display: flex; gap: 4px; margin-left: 1.5rem; }
+
+  .nav-tab {
+    background: transparent;
+    border: 1px solid transparent;
+    color: var(--muted);
+    font-size: 12px;
+    font-weight: 600;
+    padding: 6px 14px;
+    cursor: pointer;
+    border-radius: 6px;
+    font-family: 'Syne', sans-serif;
+    letter-spacing: 0.03em;
+  }
+
+  .nav-tab:hover { background: var(--bg3); color: var(--text); }
+  .nav-tab.active { background: var(--bg3); color: var(--accent); border-color: var(--border2); }
+
+  .header-right { display: flex; align-items: center; gap: 12px; }
+
+  .status-dot {
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    background: var(--accent);
+    animation: pulse 2s infinite;
+  }
+
+  .status-dot.offline { background: var(--danger); animation: none; }
+
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.4; }
+  }
+
+  .status-label { font-size: 12px; color: var(--muted); font-family: 'JetBrains Mono', monospace; }
+
+  .refresh-btn {
+    background: var(--bg3);
+    border: 1px solid var(--border2);
+    color: var(--text);
+    border-radius: 6px;
+    padding: 5px 12px;
+    font-size: 12px;
+    font-family: 'Syne', sans-serif;
+    cursor: pointer;
+  }
+
+  .refresh-btn:hover { background: var(--bg4); }
+
+  .tab-content { display: none; }
+  .tab-content.active { display: block; }
+
+  .main { padding: 1.5rem 2rem; max-width: 1400px; margin: 0 auto; }
+
+  .stats-row {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 12px;
+    margin-bottom: 1.5rem;
+  }
+
+  .stat-card {
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 1rem 1.25rem;
+    display: flex; flex-direction: column; gap: 4px;
+  }
+
+  .stat-label { font-size: 11px; color: var(--muted); letter-spacing: 0.08em; text-transform: uppercase; font-family: 'JetBrains Mono', monospace; }
+  .stat-value { font-size: 28px; font-weight: 700; line-height: 1.1; }
+  .stat-sub { font-size: 11px; color: var(--muted); font-family: 'JetBrains Mono', monospace; }
+
+  .stat-card.online .stat-value { color: var(--accent); }
+  .stat-card.deaths .stat-value { color: var(--danger); }
+  .stat-card.totems .stat-value { color: var(--totem); }
+  .stat-card.elytras .stat-value { color: var(--elytra); }
+
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 16px; }
+  .grid.wide { grid-template-columns: 2fr 1fr; }
+
+  .panel {
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    overflow: hidden;
+    display: flex; flex-direction: column;
+  }
+
+  .panel-header {
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--border);
+    display: flex; align-items: center; justify-content: space-between;
+    flex-shrink: 0;
+  }
+
+  .panel-title {
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--muted);
+    font-family: 'JetBrains Mono', monospace;
+    display: flex; align-items: center; gap: 8px;
+  }
+
+  .panel-dot { width: 6px; height: 6px; border-radius: 50%; }
+
+  .panel-body { padding: 0; flex: 1; overflow-y: auto; max-height: 340px; }
+
+  /* Darker scrollbars */
+  .panel-body::-webkit-scrollbar { width: 6px; }
+  .panel-body::-webkit-scrollbar-track { background: transparent; }
+  .panel-body::-webkit-scrollbar-thumb { background: rgba(122,127,148,0.4); border-radius: 3px; }
+  .panel-body::-webkit-scrollbar-thumb:hover { background: rgba(122,127,148,0.6); }
+
+  #map-player-list { scrollbar-width: thin; scrollbar-color: rgba(122,127,148,0.4) transparent; }
+  #map-player-list::-webkit-scrollbar { width: 6px; }
+  #map-player-list::-webkit-scrollbar-track { background: transparent; }
+  #map-player-list::-webkit-scrollbar-thumb { background: rgba(122,127,148,0.4); border-radius: 3px; }
+  #map-player-list::-webkit-scrollbar-thumb:hover { background: rgba(122,127,148,0.6); }
+
+  .log-entry {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    padding: 9px 16px;
+    border-bottom: 1px solid var(--border);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    line-height: 1.5;
+  }
+
+  .log-entry:last-child { border-bottom: none; }
+  .log-entry:hover { background: var(--bg3); }
+
+  .log-icon {
+    width: 18px; height: 18px;
+    border-radius: 4px;
+    display: flex; align-items: center; justify-content: center;
+    flex-shrink: 0;
+    margin-top: 1px;
+    font-size: 10px;
+  }
+
+  .log-icon.in    { background: rgba(74,222,128,0.15); color: var(--accent); }
+  .log-icon.out   { background: rgba(248,113,113,0.15); color: var(--danger); }
+  .log-icon.death { background: rgba(248,113,113,0.15); color: var(--danger); }
+  .log-icon.totem { background: rgba(167,139,250,0.15); color: var(--totem); }
+  .log-icon.elytra{ background: rgba(56,189,248,0.15); color: var(--elytra); }
+  .log-icon.region{ background: rgba(251,146,60,0.15); color: var(--region); }
+
+  .log-content { flex: 1; min-width: 0; }
+  .log-player { font-weight: 600; color: var(--text); }
+  .log-detail { color: var(--muted); font-size: 11px; }
+  .log-time { color: var(--muted); font-size: 10px; flex-shrink: 0; white-space: nowrap; }
+  .coords { color: var(--accent2); font-size: 10px; }
+
+  .player-list { padding: 8px; display: flex; flex-direction: column; gap: 4px; }
+
+  .player-row {
+    display: flex; align-items: center; gap: 8px;
+    padding: 7px 8px;
+    border-radius: 6px;
+    background: var(--bg3);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+  }
+
+  .player-avatar { width: 28px; height: 28px; border-radius: 4px; background: var(--bg4); overflow: hidden; flex-shrink: 0; }
+  .player-avatar img { width: 100%; height: 100%; display: block; }
+  .player-name { font-weight: 600; flex: 1; }
+
+  .health-bar { width: 60px; height: 4px; background: var(--bg4); border-radius: 2px; overflow: hidden; }
+  .health-fill { height: 100%; border-radius: 2px; }
+
+  .armor-badge { font-size: 10px; color: var(--accent2); min-width: 32px; text-align: right; }
+
+  .world-badge { font-size: 9px; padding: 2px 5px; border-radius: 3px; text-transform: uppercase; letter-spacing: 0.04em; font-weight: 600; }
+  .world-overworld { background: rgba(74,222,128,0.15); color: var(--accent); }
+  .world-nether    { background: rgba(248,113,113,0.15); color: var(--danger); }
+  .world-end       { background: rgba(167,139,250,0.15); color: var(--totem); }
+
+  .empty-state { padding: 2rem; text-align: center; color: var(--muted); font-size: 12px; font-family: 'JetBrains Mono', monospace; }
+
+  .tab-row { display: flex; gap: 4px; padding: 8px 16px 0; border-bottom: 1px solid var(--border); }
+
+  .tab {
+    font-size: 11px;
+    font-family: 'JetBrains Mono', monospace;
+    padding: 6px 12px;
+    border-radius: 5px 5px 0 0;
+    cursor: pointer;
+    color: var(--muted);
+    border: 1px solid transparent;
+    border-bottom: none;
+    background: none;
+    margin-bottom: -1px;
+  }
+
+  .tab.active { color: var(--text); background: var(--bg3); border-color: var(--border); border-bottom-color: var(--bg3); }
+  .tab:hover:not(.active) { color: var(--text); }
+
+  .spinner {
+    width: 14px; height: 14px;
+    border: 2px solid var(--border2);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+    display: none;
+  }
+
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .loading .spinner { display: block; }
+
+  .map-container {
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    overflow: hidden;
+    margin-bottom: 1.5rem;
+  }
+
+  .map-controls {
+    padding: 10px 16px;
+    border-bottom: 1px solid var(--border);
+    display: flex; gap: 8px; align-items: center; flex-wrap: wrap;
+  }
+
+  .map-controls button {
+    background: var(--bg3);
+    border: 1px solid var(--border2);
+    color: var(--text);
+    padding: 5px 12px;
+    font-size: 12px;
+    font-weight: 600;
+    border-radius: 6px;
+    cursor: pointer;
+    font-family: 'Syne', sans-serif;
+  }
+
+  .map-controls button:hover { background: var(--bg4); }
+
+  .map-controls button.active {
+    background: var(--accent);
+    color: var(--bg);
+    border-color: var(--accent);
+  }
+
+  .map-controls input {
+    background: var(--bg3);
+    border: 1px solid var(--border2);
+    color: var(--text);
+    padding: 5px 10px;
+    font-size: 12px;
+    border-radius: 6px;
+    font-family: 'JetBrains Mono', monospace;
+    max-width: 200px;
+  }
+
+  .map-canvas-wrapper {
+    position: relative;
+    height: 560px;
+    background: var(--bg);
+  }
+
+  #map-canvas { width: 100%; height: 100%; background: #0d0f14; }
+
+  .leaflet-container { background: #0d0f14; font-family: 'JetBrains Mono', monospace; }
+  .leaflet-control-zoom a { background-color: var(--bg3); color: var(--text); border: 1px solid var(--border); }
+  .leaflet-control-zoom a:hover { background-color: var(--bg4); color: var(--accent); }
+  .leaflet-control-attribution { background: rgba(13,15,20,0.8); color: var(--muted); font-size: 10px; }
+  .leaflet-popup-content-wrapper { background: var(--bg2); color: var(--text); border: 1px solid var(--border2); border-radius: 8px; }
+  .leaflet-popup-tip { background: var(--bg2); }
+
+  .map-legend {
+    position: absolute;
+    top: 10px; right: 10px;
+    background: rgba(13,15,20,0.92);
+    border: 1px solid var(--border2);
+    border-radius: 8px;
+    padding: 10px 12px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    pointer-events: none;
+    z-index: 500;
+  }
+
+  .map-legend-title { font-weight: 700; color: var(--text); margin-bottom: 6px; font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em; }
+  .map-legend-item { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; color: var(--muted); }
+  .map-legend-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+
+  .region-list { padding: 12px 16px; border-top: 1px solid var(--border); }
+  .region-list-header { font-size: 11px; color: var(--muted); font-family: 'JetBrains Mono', monospace; text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 10px; }
+
+  .region-item {
+    background: var(--bg3);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 8px 12px;
+    margin-bottom: 6px;
+    display: flex; justify-content: space-between; align-items: center;
+  }
+
+  .region-item:hover { border-color: var(--region); }
+
+  .region-info { font-family: 'JetBrains Mono', monospace; font-size: 12px; flex: 1; }
+
+  .region-name-edit {
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: 4px;
+    color: var(--text);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    font-weight: 600;
+    padding: 2px 4px;
+    margin: -2px -4px;
+    width: 100%;
+  }
+
+  .region-name-edit:hover { border-color: var(--border2); background: var(--bg4); }
+  .region-name-edit:focus { outline: none; border-color: var(--region); background: var(--bg4); }
+
+  .region-coords { color: var(--muted); font-size: 11px; margin-top: 2px; }
+
+  .region-delete {
+    background: rgba(248,113,113,0.15);
+    border: 1px solid rgba(248,113,113,0.3);
+    color: var(--danger);
+    padding: 4px 10px;
+    font-size: 11px;
+    font-weight: 600;
+    border-radius: 5px;
+    cursor: pointer;
+    font-family: 'Syne', sans-serif;
+    flex-shrink: 0;
+    margin-left: 8px;
+  }
+
+  .region-delete:hover { background: rgba(248,113,113,0.25); }
+
+  @media (max-width: 900px) {
+    .stats-row { grid-template-columns: repeat(2, 1fr); }
+    .grid, .grid.wide { grid-template-columns: 1fr; }
+    .main { padding: 1rem; }
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div style="display:flex;align-items:center;">
+    <div class="logo">
+      <div class="logo-icon">
+        <svg viewBox="0 0 16 16" fill="none">
+          <rect x="2" y="2" width="5" height="5" fill="#0d0f14" rx="1"/>
+          <rect x="9" y="2" width="5" height="5" fill="#0d0f14" rx="1"/>
+          <rect x="2" y="9" width="5" height="5" fill="#0d0f14" rx="1"/>
+          <rect x="9" y="9" width="5" height="5" fill="#0d0f14" rx="1"/>
+        </svg>
+      </div>
+      MC MONITOR
+    </div>
+    <div class="nav-tabs">
+      <button class="nav-tab active" onclick="switchMainTab('dashboard', this)">Dashboard</button>
+      <button class="nav-tab" onclick="switchMainTab('map-editor', this)">Map Editor</button>
+    </div>
+  </div>
+  <div class="header-right">
+    <div class="spinner" id="spinner"></div>
+    <div id="status-dot" class="status-dot"></div>
+    <span class="status-label" id="status-label">connecting...</span>
+    <button class="refresh-btn" onclick="fetchAll()">Refresh</button>
+  </div>
+</header>
+
+<div id="dashboard-tab" class="tab-content active">
+<div class="main">
+
+  <div class="stats-row">
+    <div class="stat-card online">
+      <div class="stat-label">Online Now</div>
+      <div class="stat-value" id="stat-online">—</div>
+      <div class="stat-sub" id="stat-max">of ? max</div>
+    </div>
+    <div class="stat-card deaths">
+      <div class="stat-label">Deaths Today</div>
+      <div class="stat-value" id="stat-deaths">—</div>
+      <div class="stat-sub">logged kills</div>
+    </div>
+    <div class="stat-card totems">
+      <div class="stat-label">Totems Used</div>
+      <div class="stat-value" id="stat-totems">—</div>
+      <div class="stat-sub">pops detected</div>
+    </div>
+    <div class="stat-card elytras">
+      <div class="stat-label">Elytra Sessions</div>
+      <div class="stat-value" id="stat-elytras">—</div>
+      <div class="stat-sub">flights logged</div>
+    </div>
+  </div>
+
+  <div class="grid wide">
+    <div class="panel">
+      <div class="panel-header">
+        <div class="panel-title">
+          <div class="panel-dot" style="background:var(--accent)"></div>
+          <span>Live Players</span>
+          <div class="spinner" id="players-spinner"></div>
+        </div>
+        <span class="status-label" id="players-updated"></span>
+      </div>
+      <div class="panel-body">
+        <div id="players-list" class="player-list">
+          <div class="empty-state">fetching players...</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-header">
+        <div class="panel-title">
+          <div class="panel-dot" style="background:var(--danger)"></div>
+          <span>Deaths &amp; Totems</span>
+        </div>
+      </div>
+      <div class="panel-body" id="deaths-list">
+        <div class="empty-state">no events yet</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="grid">
+    <div class="panel">
+      <div class="tab-row">
+        <button class="tab active" onclick="switchTab('all', this)">All</button>
+        <button class="tab" onclick="switchTab('in', this)">Logins</button>
+        <button class="tab" onclick="switchTab('out', this)">Logouts</button>
+      </div>
+      <div class="panel-header" style="border-top:none;">
+        <div class="panel-title">
+          <div class="panel-dot" style="background:var(--accent2)"></div>
+          <span>Login / Logout Log</span>
+        </div>
+      </div>
+      <div class="panel-body" id="logins-list">
+        <div class="empty-state">loading...</div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-header">
+        <div class="panel-title">
+          <div class="panel-dot" style="background:var(--elytra)"></div>
+          <span>Elytra Sessions</span>
+        </div>
+      </div>
+      <div class="panel-body" id="planes-list">
+        <div class="empty-state">no flights logged</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="grid">
+    <div class="panel">
+      <div class="panel-header">
+        <div class="panel-title">
+          <div class="panel-dot" style="background:var(--region)"></div>
+          <span>Region Detections</span>
+        </div>
+      </div>
+      <div class="panel-body" id="regions-list">
+        <div class="empty-state">no region activity</div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-header">
+        <div class="panel-title">
+          <div class="panel-dot" style="background:var(--warn)"></div>
+          <span>Summary</span>
+        </div>
+      </div>
+      <div class="panel-body" id="main-list">
+        <div class="empty-state">loading...</div>
+      </div>
+    </div>
+  </div>
+
+</div>
+</div>
+
+<div id="map-editor-tab" class="tab-content">
+<div class="main">
+  <div class="map-container">
+    <div class="map-controls">
+      <button id="draw-mode-btn" onclick="toggleDrawMode()">Draw Region</button>
+      <input type="text" id="region-name-input" placeholder="Region name (optional)">
+      <button onclick="clearDraw()">Clear</button>
+      <span class="status-label" id="map-status">Click "Draw Region" then drag on the map</span>
+    </div>
+    <div class="map-canvas-wrapper">
+      <div id="map-canvas"></div>
+      <div class="map-legend">
+        <div class="map-legend-title">Legend</div>
+        <div class="map-legend-item">
+          <div class="map-legend-dot" style="background:#4ade80"></div>
+          <span>Players Online</span>
+        </div>
+        <div class="map-legend-item">
+          <div class="map-legend-dot" style="background:#e40510"></div>
+          <span>Logged Out</span>
+        </div>
+        <div class="map-legend-item">
+          <div style="width:20px;height:10px;background:rgba(251,146,60,0.25);border:1px solid #fb923c;border-radius:2px;"></div>
+          <span>Regions</span>
+        </div>
+        <div class="map-legend-item">
+          <div style="width:20px;height:10px;background:rgba(74,222,128,0.15);border:1px dashed #4ade80;border-radius:2px;"></div>
+          <span>Drawing</span>
+        </div>
+      </div>
+      <div id="map-player-list" style="position:absolute;top:160px;right:10px;background:rgba(13,15,20,0.92);border:1px solid rgba(255,255,255,0.12);border-radius:8px;padding:10px 12px;font-family:'JetBrains Mono',monospace;font-size:11px;pointer-events:auto;z-index:500;max-height:300px;overflow-y:auto;min-width:150px;"></div>
+    </div>
+    <div class="region-list">
+      <div class="region-list-header">Saved Regions (<span id="region-count">0</span>)</div>
+      <div id="regions-editor-list"></div>
+    </div>
+  </div>
+</div>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+const API = '';
+const SQUAREMAP_URL = 'http://103.243.173.194:7188';
+const WORLD = 'minecraft_overworld';
+
+let loginsFilter = 'all';
+let rawLogins = [];
+let players = [];
+let deadPlayers = {};
+let regions = [];
+let map = null;
+let playerMarkers = {};
+let logoutMarkers = {};
+let regionLayers = [];
+let currentRectangle = null;
+let drawModeActive = false;
+
+function switchMainTab(tab, btn) {
+  document.querySelectorAll('.nav-tab').forEach(t => t.classList.remove('active'));
+  document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+  btn.classList.add('active');
+  document.getElementById(tab + '-tab').classList.add('active');
+  if (tab === 'map-editor') initMapEditor();
+}
+
+function switchTab(filter, btn) {
+  loginsFilter = filter;
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  btn.classList.add('active');
+  renderLogins();
+}
+
+function setStatus(online) {
+  document.getElementById('status-dot').className = 'status-dot' + (online ? '' : ' offline');
+  document.getElementById('status-label').textContent = online ? 'live' : 'offline';
+}
+
+function parseLines(text) {
+  return text.split('\n').filter(l => {
+    if (!l.trim()) return false;
+    if (l.startsWith('---------') || l.startsWith('=====') || l.startsWith('--')) return false;
+    if (l.includes('Tracking players')) return false;
+    if (l.includes('Connection recovered')) return false;
+    if (l.includes('Error checking')) return false;
+    if (l.includes('Previous error')) return false;
+    if (l.includes('no deaths') || l.includes('No death')) return false;
+    if (l.includes('no elytra') || l.includes('No elytra')) return false;
+    if (l.includes('no region') || l.includes('No region')) return false;
+    if (l.includes('nothing here')) return false;
+    return true;
+  });
+}
+
+function parseEntry(line) {
+  const m = line.match(/\[(\d{4}-\d{2}-\d{2} \d{1,2}:\d{2}:\d{2} [AP]M GMT\+8)\]/);
+  const time = m ? m[1] : '';
+  const body = line.replace(m ? m[0] : '', '').trim();
+  const tp = time.match(/(\d{4}-\d{2}-\d{2}) (\d{1,2}:\d{2}:\d{2} [AP]M)/);
+  return { time: tp ? tp[2] : time, body };
+}
+
+function extractPlayer(body) {
+  const prefixes = ['Login', 'Logout', 'Death', 'Totem', 'Elytra', 'Region'];
+  for (const prefix of prefixes) {
+    const regex = new RegExp(`${prefix}\\s+([^\\s]+)`);
+    const m = body.match(regex);
+    if (m) return m[1];
+  }
+  const m = body.match(/^([^\s]+)/);
+  return m ? m[1] : '';
+}
+
+function healthColor(h) {
+  const p = h / 20;
+  if (p > 0.6) return '#4ade80';
+  if (p > 0.3) return '#fbbf24';
+  return '#f87171';
+}
+
+function worldBadge(world) {
+  if (!world) return '';
+  if (world.includes('nether')) return '<span class="world-badge world-nether">Nether</span>';
+  if (world.includes('end'))    return '<span class="world-badge world-end">End</span>';
+  return '<span class="world-badge world-overworld">OW</span>';
+}
+
+function renderLoginEntry(line) {
+  const { time, body } = parseEntry(line);
+  const isIn = body.includes('logged in');
+  const isOut = body.includes('logged out');
+
+  // Must contain actual login/logout events
+  if (!isIn && !isOut) return '';
+
+  const type = isIn ? 'in' : 'out';
+  const player = extractPlayer(body);
+
+  // Validate player name (Minecraft usernames are 3-16 chars, alphanumeric + underscore)
+  if (!player || player.length < 3 || !/^[a-zA-Z0-9_]+$/.test(player)) return '';
+
+  const cm = body.match(/X=([-\d]+).*?Z=([-\d]+)/);
+  const coords = cm ? `X:${cm[1]} Z:${cm[2]}` : '';
+  const dm = body.match(/time:\s*([\d:]+)/);
+  const duration = dm ? dm[1] : '';
+  return `<div class="log-entry">
+    <div class="log-icon ${type}">${isIn ? 'In' : 'Out'}</div>
+    <div class="log-content">
+      <div class="log-player">${player}</div>
+      <div class="log-detail">${coords ? `<span class="coords">${coords}</span>` : ''}${duration ? ` · ${duration}` : ''}</div>
+    </div>
+    <div class="log-time">${time}</div>
+  </div>`;
+}
+
+function renderDeathEntry(line) {
+  const { time, body } = parseEntry(line);
+  
+  // Check if it's a death or totem event
+  const isTotem = body.includes('TOTEM') || body.includes('totem');
+  const isDeath = body.includes('died') || body.includes('DIED') || body.includes('likely');
+
+  if (!isTotem && !isDeath) return '';
+
+  const type = isTotem ? 'totem' : 'death';
+  let player = '';
+  let coords = '';
+  let closest = '';
+  let hpChange = '';
+
+  // New format: "{name} died | x:XXX Z:YYY ..."
+  if (body.includes('died |') || body.includes('died|')) {
+    const playerMatch = body.match(/^(\w+)\s+died/);
+    if (playerMatch) {
+      player = playerMatch[1];
+      const coordMatch = body.match(/x:([-\d]+)\s+Z:([-\d]+)/i);
+      if (coordMatch) {
+        coords = `X:${coordMatch[1]} Z:${coordMatch[2]}`;
+      }
+      // Extract closest players - look for quoted names
+      const quotedMatch = body.match(/"([^"]+)"/g);
+      if (quotedMatch && quotedMatch.length > 0) {
+        closest = quotedMatch.map(q => q.replace(/"/g, '')).join(', ');
+      }
+    }
+  } else {
+    // Old format
+    player = extractPlayer(body);
+    const cmOld = body.match(/X=([-\d]+).*?Z=([-\d]+)/);
+    if (cmOld) coords = `X:${cmOld[1]} Z:${cmOld[2]}`;
+    const hpm = body.match(/health: (\d+)->(\d+)/);
+    if (hpm) hpChange = `HP: ${hpm[1]}→${hpm[2]}`;
+  }
+
+  if (!player || player.length < 3 || !/^[a-zA-Z0-9_]+$/.test(player)) return '';
+
+  return `<div class="log-entry">
+    <div class="log-icon ${type}">${isTotem ? 'T' : 'X'}</div>
+    <div class="log-content">
+      <div class="log-player">${player} <span style="color:var(--muted);font-weight:400">${isTotem ? 'used totem' : 'died'}</span></div>
+      <div class="log-detail">${coords ? `<span class="coords">${coords}</span>` : ''}${hpChange ? ` · ${hpChange}` : ''}${closest ? ` · ${closest}` : ''}</div>
+    </div>
+    <div class="log-time">${time}</div>
+  </div>`;
+}
+
+function renderElytraEntry(line) {
+  const { time, body } = parseEntry(line);
+
+  // Must contain elytra flight info
+  if (!body.includes('time:')) return '';
+
+  const player = extractPlayer(body);
+
+  // Validate player name
+  if (!player || player.length < 3 || !/^[a-zA-Z0-9_]+$/.test(player)) return '';
+
+  const dm = body.match(/time:\s+([\d:]+)/);
+  const duration = dm ? dm[1] : '';
+  const sm = body.match(/(\d+)blk\/s/);
+  const speed = sm ? `${sm[1]} blk/s` : '';
+  const bm = body.match(/(\d+)\s+blocks/);
+  const blocks = bm ? `${bm[1]} blocks` : '';
+  const fm = body.match(/(\d+,-?\d+)\s*→/);
+  const fromCoord = fm ? fm[1] : '';
+  const tm2 = body.match(/→\s*(\d+,-?\d+)/);
+  const toCoord = tm2 ? tm2[1] : '';
+  const coords = fromCoord && toCoord ? `${fromCoord} → ${toCoord}` : '';
+  return `<div class="log-entry">
+    <div class="log-icon elytra">~</div>
+    <div class="log-content">
+      <div class="log-player">${player}</div>
+      <div class="log-detail">${duration ? `${duration}` : ''}${speed ? ` · ${speed}` : ''}${blocks ? ` · ${blocks}` : ''}${coords ? ` · <span class="coords">${coords}</span>` : ''}</div>
+    </div>
+    <div class="log-time">${time}</div>
+  </div>`;
+}
+
+function renderRegionEntry(line) {
+  const { time, body } = parseEntry(line);
+  const entered = body.includes('ENTERED');
+  const player = extractPlayer(body);
+  const rm = body.match(/(?:ENTERED|LEFT)\s+(.+?)(?:\s+at)/);
+  const region = rm ? rm[1] : '';
+
+  // Skip rendering if key fields are missing
+  if (!player || !region) return '';
+
+  const cm = body.match(/at\s+X=([-\d]+),\s*Z=([-\d]+)/);
+  const coords = cm ? `X:${cm[1]} Z:${cm[2]}` : '';
+  const sm = body.match(/spent\s+([\d:]+)/);
+  const spent = sm ? sm[1] : '';
+  return `<div class="log-entry">
+    <div class="log-icon region">${entered ? 'In' : 'Out'}</div>
+    <div class="log-content">
+      <div class="log-player">${player} <span style="color:var(--muted);font-weight:400">${entered ? 'entered' : 'left'} ${region}</span></div>
+      <div class="log-detail">${coords ? `<span class="coords">${coords}</span>` : ''}${spent ? ` · ${spent}` : ''}</div>
+    </div>
+    <div class="log-time">${time}</div>
+  </div>`;
+}
+
+function renderPlayers(plist) {
+  if (!plist) plist = [];
+  
+  // Combine alive and dead players
+  let html = '<div style="font-weight:700;color:#e8eaf0;margin-bottom:8px;font-size:10px;text-transform:uppercase;letter-spacing:0.05em;">Players</div>';
+  
+  // Online players
+  if (plist && plist.length) {
+    html += '<div style="margin-bottom:8px;"><div style="color:#4ade80;font-size:10px;font-weight:600;margin-bottom:4px;">● Online</div>';
+    html += plist.map(p => {
+      const hp = p.health ?? 20;
+      const armor = p.armor ?? 0;
+      const pct = Math.round((hp / 20) * 100);
+      const headUrl = p.uuid ? `https://mc-heads.net/avatar/${p.uuid}/28` : '';
+      return `<div class="player-row">
+        <div class="player-avatar">${headUrl ? `<img src="${headUrl}" alt="" onerror="this.style.display='none'">` : ''}</div>
+        <div class="player-name">${p.name}</div>
+        ${worldBadge(p.world)}
+        <div class="health-bar"><div class="health-fill" style="width:${pct}%;background:${healthColor(hp)}"></div></div>
+        <span style="font-size:10px;color:var(--danger);min-width:24px;text-align:right">${hp}/20</span>
+        <div class="armor-badge">armor:${armor}</div>
+      </div>`;
+    }).join('');
+    html += '</div>';
+  }
+  
+  // Dead players (within 20sec window)
+  const deadList = Object.entries(deadPlayers).map(([name, data]) => ({
+    name,
+    ...data
+  }));
+  if (deadList.length > 0) {
+    html += '<div style="margin-bottom:8px;"><div style="color:#fb923c;font-size:10px;font-weight:600;margin-bottom:4px;">● Dead</div>';
+    html += deadList.map(p => {
+      const armor = p.armor ?? 0;
+      const worldBadgeStr = worldBadge(p.world);
+      return `<div class="player-row">
+        <div class="player-name" style="color:#fb923c;">${p.name} DEAD</div>
+        ${worldBadgeStr}
+        <span style="font-size:10px;color:#fb923c;min-width:24px;text-align:right">0/20</span>
+        <div class="armor-badge">armor:${armor}</div>
+      </div>`;
+    }).join('');
+    html += '</div>';
+  }
+  
+  if ((!plist || !plist.length) && deadList.length === 0) {
+    html = '<div class="empty-state">no players</div>';
+  }
+  
+  return html;
+}
+
+function renderLogins() {
+  let lines = rawLogins;
+  if (loginsFilter === 'in')  lines = lines.filter(l => l.includes('logged in'));
+  if (loginsFilter === 'out') lines = lines.filter(l => l.includes('logged out'));
+  const el = document.getElementById('logins-list');
+  const reversed = [...lines].reverse().slice(0, 100).map(renderLoginEntry).filter(e => e);
+  el.innerHTML = reversed.length ? reversed.join('') : '<div class="empty-state">nothing here</div>';
+}
+
+async function fetchPlayers() {
+  try {
+    const res = await fetch(API + '/tiles/players.json');
+    const data = await res.json();
+    if (data.error) { setStatus(false); return; }
+    players = data.players || [];
+    
+    // Fetch dead players
+    try {
+      const deadRes = await fetch(API + '/api/dead-players');
+      deadPlayers = await deadRes.json() || {};
+    } catch(e) {
+      deadPlayers = {};
+    }
+    
+    document.getElementById('stat-online').textContent = players.length;
+    document.getElementById('stat-max').textContent = `of ${data.max || '?'} max`;
+    document.getElementById('players-list').innerHTML = renderPlayers(players);
+    document.getElementById('players-updated').textContent = new Date().toLocaleTimeString();
+    setStatus(true);
+    if (map && document.getElementById('map-editor-tab').classList.contains('active')) {
+      updatePlayersOnMap();
+    }
+  } catch(e) {
+    setStatus(false);
+    document.getElementById('players-list').innerHTML = '<div class="empty-state">cannot reach server</div>';
+  }
+}
+
+async function fetchLog(endpoint) {
+  try {
+    const res = await fetch(endpoint);
+    const text = await res.text();
+    return parseLines(text.replace(/<\/?pre>/g, ''));
+  } catch(e) { return []; }
+}
+
+async function fetchAll() {
+  document.getElementById('spinner').style.display = 'block';
+  await fetchPlayers();
+
+  rawLogins = await fetchLog(API + '/logs/l');
+  renderLogins();
+
+  const deathLines = await fetchLog(API + '/logs/d');
+  const deathEl = document.getElementById('deaths-list');
+  const dr = [...deathLines].reverse().slice(0, 60).map(renderDeathEntry).filter(e => e);
+  deathEl.innerHTML = dr.length ? dr.join('') : '<div class="empty-state">No death and totems logs</div>';
+  document.getElementById('stat-deaths').textContent = deathLines.filter(l => l.includes('died') || l.includes('DIED') || l.includes('likely')).length;
+  document.getElementById('stat-totems').textContent = deathLines.filter(l => l.includes('TOTEM')).length;
+
+  const planeLines = await fetchLog(API + '/logs/p');
+  const planeEl = document.getElementById('planes-list');
+  const pr = [...planeLines].reverse().slice(0, 60);
+  planeEl.innerHTML = pr.length ? pr.map(renderElytraEntry).join('') : '<div class="empty-state">No elytra sessions</div>';
+  document.getElementById('stat-elytras').textContent = planeLines.length;
+
+  const regionLines = await fetchLog(API + '/logs/r');
+  const regionEl = document.getElementById('regions-list');
+  const rr = [...regionLines].reverse().slice(0, 60).map(renderRegionEntry).filter(e => e);
+  regionEl.innerHTML = rr.length ? rr.join('') : '<div class="empty-state">No region activity</div>';
+
+  try {
+    const mainRes = await fetch(API + '/logs/main');
+    const mainText = (await mainRes.text()).replace(/<\/?pre>/g, '');
+    document.getElementById('main-list').innerHTML = `<div style="padding:12px 16px;font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--muted);white-space:pre-wrap;line-height:1.7">${mainText}</div>`;
+  } catch(e) {}
+
+  document.getElementById('spinner').style.display = 'none';
+}
+
+function mcToLatLng(x, z) { return L.latLng(-z, x); }
+function latLngToMc(ll) { return { x: Math.round(ll.lng), z: Math.round(-ll.lat) }; }
+
+function initMapEditor() {
+  if (map) return;
+
+  map = L.map('map-canvas', {
+    crs: L.CRS.Simple,
+    minZoom: -3,
+    maxZoom: 0,
+    zoom: -1,
+    center: [0, 0],
+    attributionControl: false,
+    zoomControl: true
+  });
+
+  const SquaremapLayer = L.TileLayer.extend({
+    getTileUrl: function(coords) {
+      const sqZoom = Math.max(0, Math.min(3, coords.z + 3));
+      const blocksPerLeafletTile = 512 * Math.pow(2, -coords.z);
+      const blocksPerSqTile = 512 * Math.pow(2, 3 - sqZoom);
+      const mcX = coords.x * blocksPerLeafletTile;
+      const mcZ = coords.y * blocksPerLeafletTile;
+      const sqX = Math.floor(mcX / blocksPerSqTile);
+      const sqZ = Math.floor(mcZ / blocksPerSqTile);
+      return `${SQUAREMAP_URL}/tiles/${WORLD}/${sqZoom}/${sqX}_${sqZ}.png`;
+    }
+  });
+
+  new SquaremapLayer('', { tileSize: 512, minZoom: -3, maxZoom: 0, noWrap: false }).addTo(map);
+  map.setView(mcToLatLng(-3500, -5600), -1);
+
+  loadRegions();
+  updatePlayerListPanel();
+  map.on('mousedown', startDrawing);
+  map.on('mousemove', updateDrawing);
+  map.on('mouseup', finishDrawing);
+}
+
+function updatePlayerListPanel() {
+  const listDiv = document.getElementById('map-player-list');
+  let html = '<div style="font-weight:700;color:#e8eaf0;margin-bottom:8px;font-size:10px;text-transform:uppercase;letter-spacing:0.05em;">Players</div>';
+
+  // Online players
+  if (players.length > 0) {
+    html += '<div style="margin-bottom:8px;"><div style="color:#4ade80;font-size:10px;font-weight:600;margin-bottom:4px;">● Online</div>';
+    players.forEach(p => {
+      const headUrl = `https://mc-heads.net/avatar/${p.uuid || p.name}/24`;
+      html += `<div style="display:flex;align-items:center;gap:6px;padding:4px;cursor:pointer;border-radius:4px;margin-bottom:2px;" onclick="panToPlayer(${p.x},${p.z})">
+        <img src="${headUrl}" width="20" height="20" style="border-radius:2px;border:1px solid #4ade80;" onerror="this.style.display='none'">
+        <span style="color:#e8eaf0;font-size:11px;">${p.name}</span>
+      </div>`;
+    });
+    html += '</div>';
+  }
+
+  // Dead players
+  const deadList = Object.entries(deadPlayers || {});
+  if (deadList.length > 0) {
+    html += '<div style="margin-bottom:8px;"><div style="color:#fb923c;font-size:10px;font-weight:600;margin-bottom:4px;">● Dead</div>';
+    deadList.forEach(([name, state]) => {
+      const headUrl = `https://mc-heads.net/avatar/${name}/24`;
+      html += `<div style="display:flex;align-items:center;gap:6px;padding:4px;cursor:pointer;border-radius:4px;margin-bottom:2px;" onclick="panToPlayer(${state.x},${state.z})">
+        <img src="${headUrl}" width="20" height="20" style="border-radius:2px;border:1px solid #fb923c;" onerror="this.style.display='none'">
+        <span style="color:#fb923c;font-size:11px;">${name} DEAD</span>
+      </div>`;
+    });
+    html += '</div>';
+  }
+
+  // Offline players
+  fetch(API + '/api/logout-state')
+    .then(res => res.json())
+    .then(logoutState => {
+      const deadNames = new Set(Object.keys(deadPlayers || {}));
+      const offlineEntries = Object.entries(logoutState).filter(([name]) => !deadNames.has(name));
+      
+      if (offlineEntries.length > 0) {
+        html += '<div><div style="color:#e40510;font-size:10px;font-weight:600;margin-bottom:4px;">● Offline</div>';
+        offlineEntries.forEach(([name, state]) => {
+          const headUrl = `https://mc-heads.net/avatar/${name}/24`;
+          html += `<div style="display:flex;align-items:center;gap:6px;padding:4px;cursor:pointer;border-radius:4px;margin-bottom:2px;" onclick="panToPlayer(${state.x},${state.z})">
+            <img src="${headUrl}" width="20" height="20" style="border-radius:2px;border:1px solid #e40510;" onerror="this.style.display='none'">
+            <span style="color:#e8eaf0;font-size:11px;">${name}</span>
+          </div>`;
+        });
+        html += '</div>';
+      }
+      listDiv.innerHTML = html;
+    })
+    .catch(e => { listDiv.innerHTML = html; });
+}
+
+function panToPlayer(x, z) {
+  const latlng = mcToLatLng(x, z);
+  map.setView(latlng, -1);
+}
+
+function startDrawing(e) {
+  if (!drawModeActive) return;
+  drawingStart = e.latlng;
+  if (currentRectangle) { map.removeLayer(currentRectangle); }
+}
+
+function updateDrawing(e) {
+  if (!drawModeActive || !drawingStart) return;
+  if (currentRectangle) { map.removeLayer(currentRectangle); }
+  currentRectangle = L.rectangle(L.latLngBounds(drawingStart, e.latlng), {
+    color: '#4ade80', weight: 2, fillColor: '#4ade80', fillOpacity: 0.2, dashArray: '8,8'
+  }).addTo(map);
+}
+
+function finishDrawing(e) {
+  if (!drawModeActive || !drawingStart) return;
+  const bounds = L.latLngBounds(drawingStart, e.latlng);
+  
+  const nw = latLngToMc(bounds.getNorthWest());
+  const se = latLngToMc(bounds.getSouthEast());
+  
+  const xmin = Math.min(nw.x, se.x);
+  const xmax = Math.max(nw.x, se.x);
+  const zmin = Math.min(nw.z, se.z);
+  const zmax = Math.max(nw.z, se.z);
+
+  if (Math.abs(xmax - xmin) < 50 && Math.abs(zmax - zmin) < 50) {
+    if (currentRectangle) { map.removeLayer(currentRectangle); currentRectangle = null; }
+    drawingStart = null;
+    return;
+  }
+
+  let regionName = document.getElementById('region-name-input').value.trim();
+  if (!regionName) regionName = `Region ${regions.length + 1}`;
+
+  regions.push({ name: regionName, bounds: [xmin, xmax, zmin, zmax] });
+  document.getElementById('region-name-input').value = '';
+  if (currentRectangle) { map.removeLayer(currentRectangle); currentRectangle = null; }
+  drawingStart = null;
+
+  updateRegionCount();
+  renderRegionList();
+  updateRegionsOnMap();
+  document.getElementById('map-status').textContent = `Added "${regionName}"`;
+  saveRegions();
+
+  // Auto-exit draw mode after creating a region
+  drawModeActive = false;
+  const btn = document.getElementById('draw-mode-btn');
+  btn.classList.remove('active');
+  btn.textContent = 'Draw Region';
+  document.getElementById('map-canvas').style.cursor = '';
+  map.dragging.enable();
+}
+
+function toggleDrawMode() {
+  drawModeActive = !drawModeActive;
+  const btn = document.getElementById('draw-mode-btn');
+  if (drawModeActive) {
+    btn.classList.add('active');
+    btn.textContent = 'Drawing... (click to stop)';
+    document.getElementById('map-canvas').style.cursor = 'crosshair';
+    map.dragging.disable();
+  } else {
+    btn.classList.remove('active');
+    btn.textContent = 'Draw Region';
+    document.getElementById('map-canvas').style.cursor = '';
+    map.dragging.enable();
+    if (currentRectangle) { map.removeLayer(currentRectangle); currentRectangle = null; }
+    drawingStart = null;
+  }
+}
+
+function clearDraw() {
+  if (currentRectangle) { map.removeLayer(currentRectangle); currentRectangle = null; }
+  drawingStart = null;
+}
+
+async function loadRegions() {
+  try {
+    const res = await fetch(API + '/api/regions');
+    regions = await res.json();
+    updateRegionCount();
+    renderRegionList();
+    if (map) { updateRegionsOnMap(); updatePlayersOnMap(); }
+  } catch(e) { console.error('Failed to load regions:', e); }
+}
+
+function updateRegionsOnMap() {
+  regionLayers.forEach(l => map.removeLayer(l));
+  regionLayers = [];
+  regions.forEach(region => {
+    const [xmin, xmax, zmin, zmax] = region.bounds;
+    const rect = L.rectangle([mcToLatLng(xmin, zmax), mcToLatLng(xmax, zmin)], {
+      color: '#fb923c', weight: 2, fillColor: '#fb923c', fillOpacity: 0.15
+    });
+    rect.bindPopup(`<b>${region.name}</b><br>X: ${xmin} to ${xmax}<br>Z: ${zmin} to ${zmax}`);
+    rect.addTo(map);
+    regionLayers.push(rect);
+  });
+}
+
+function updatePlayersOnMap() {
+  const seen = new Set();
+  players.forEach(player => {
+    if (!player.x && player.x !== 0) return;
+    seen.add(player.name);
+    const latlng = mcToLatLng(player.x, player.z);
+    if (playerMarkers[player.name]) {
+      playerMarkers[player.name].setLatLng(latlng);
+      return;
+    }
+    const headUrl = `https://mc-heads.net/avatar/${player.uuid || player.name}/24`;
+    const icon = L.divIcon({
+      className: '',
+      html: `<div style="display:flex;align-items:center;gap:4px;">
+        <img src="${headUrl}" width="24" height="24" style="border-radius:3px;border:2px solid #4ade80;display:block;" onerror="this.style.display='none'">
+        <div style="background:rgba(13,15,20,0.9);color:#e8eaf0;padding:2px 5px;border-radius:3px;font-size:11px;font-weight:600;white-space:nowrap;font-family:sans-serif;border:1px solid rgba(255,255,255,0.1);">${player.name}</div>
+      </div>`,
+      iconSize: [24, 24],
+      iconAnchor: [12, 12]
+    });
+    const marker = L.marker(latlng, { icon });
+    marker.bindPopup(`<b>${player.name}</b><br>X: ${player.x}, Z: ${player.z}<br>HP: ${player.health}/20 | Armor: ${player.armor}`);
+    marker.addTo(map);
+    playerMarkers[player.name] = marker;
+  });
+  
+  // Add dead players to map with orange markers
+  Object.entries(deadPlayers || {}).forEach(([name, state]) => {
+    seen.add(name);
+    const latlng = mcToLatLng(state.x, state.z);
+    if (playerMarkers[name]) {
+      playerMarkers[name].setLatLng(latlng);
+      return;
+    }
+    const headUrl = `https://mc-heads.net/avatar/${name}/24`;
+    const icon = L.divIcon({
+      className: '',
+      html: `<div style="display:flex;align-items:center;gap:4px;">
+        <img src="${headUrl}" width="24" height="24" style="border-radius:3px;border:2px solid #fb923c;display:block;" onerror="this.style.display='none'">
+        <div style="background:rgba(13,15,20,0.9);color:#fb923c;padding:2px 5px;border-radius:3px;font-size:11px;font-weight:600;white-space:nowrap;font-family:sans-serif;border:1px solid rgba(251,146,60,0.3);">${name} DEAD</div>
+      </div>`,
+      iconSize: [24, 24],
+      iconAnchor: [12, 12]
+    });
+    const marker = L.marker(latlng, { icon });
+    marker.bindPopup(`<b>${name}</b> (DEAD)<br>X: ${state.x}, Z: ${state.z}<br>HP: 0/20 | Armor: ${state.armor}<br><span style="font-size:10px;color:#fb923c;">World: ${state.world}</span>`);
+    marker.addTo(map);
+    playerMarkers[name] = marker;
+  });
+  
+  Object.keys(playerMarkers).forEach(name => {
+    if (!seen.has(name)) { map.removeLayer(playerMarkers[name]); delete playerMarkers[name]; }
+  });
+
+  // Update player list panel
+  if (map) updatePlayerListPanel();
+
+  // Show logged-out players with red outline (separate from online players to avoid flicker)
+  fetch(API + '/api/logout-state')
+    .then(res => res.json())
+    .then(logoutState => {
+      const logoutPlayers = new Set(Object.keys(logoutState));
+      // Remove logout markers for players who are now online
+      Object.keys(logoutMarkers).forEach(name => {
+        if (seen.has(name)) {
+          map.removeLayer(logoutMarkers[name]);
+          delete logoutMarkers[name];
+        }
+      });
+      // Add or update logout markers - exclude dead players
+      const deadNames = new Set(Object.keys(deadPlayers || {}));
+      Object.entries(logoutState).forEach(([name, state]) => {
+        if (seen.has(name)) return; // Skip if player is online or dead
+        if (deadNames.has(name)) return; // Skip if player is dead
+        const latlng = mcToLatLng(state.x, state.z);
+        if (logoutMarkers[name]) {
+          // Update position only if it changed
+          logoutMarkers[name].setLatLng(latlng);
+          return;
+        }
+        const headUrl = `https://mc-heads.net/avatar/${name}/24`;
+        const icon = L.divIcon({
+          className: '',
+          html: `<div style="display:flex;align-items:center;gap:4px;">
+            <img src="${headUrl}" width="24" height="24" style="border-radius:3px;border:2px solid #e40510;display:block;" onerror="this.style.display='none'">
+            <div style="background:rgba(13,15,20,0.9);color:#e8eaf0;padding:2px 5px;border-radius:3px;font-size:11px;font-weight:600;white-space:nowrap;font-family:sans-serif;border:1px solid rgba(228,5,16,0.5);">${name}</div>
+          </div>`,
+          iconSize: [24, 24],
+          iconAnchor: [12, 12]
+        });
+        const marker = L.marker(latlng, { icon });
+        marker.bindPopup(`<b>${name}</b> (logged out)<br>X: ${state.x}, Z: ${state.z}<br>HP: ${state.health}/20 | Armor: ${state.armor}<br><span style="font-size:10px;color:#666;">${state.timestamp}</span>`);
+        marker.addTo(map);
+        logoutMarkers[name] = marker;
+      });
+    })
+    .catch(e => console.error('Failed to load logout state:', e));
+}
+
+function deleteRegion(i) {
+  const name = regions[i].name;
+  regions.splice(i, 1);
+  updateRegionCount();
+  renderRegionList();
+  updateRegionsOnMap();
+  document.getElementById('map-status').textContent = `Deleted "${name}"`;
+  saveRegions();
+}
+
+function updateRegionCount() {
+  document.getElementById('region-count').textContent = regions.length;
+}
+
+function renderRegionList() {
+  const list = document.getElementById('regions-editor-list');
+  if (!regions.length) {
+    list.innerHTML = '<div class="empty-state">No regions yet. Draw one on the map above.</div>';
+    return;
+  }
+  list.innerHTML = regions.map((r, i) => {
+    const [xmin, xmax, zmin, zmax] = r.bounds;
+    return `<div class="region-item">
+      <div class="region-info">
+        <input class="region-name-edit" value="${r.name}" onchange="renameRegion(${i}, this.value)" onkeydown="if(event.key==='Enter')this.blur()">
+        <div class="region-coords">X: ${xmin} to ${xmax} &nbsp;·&nbsp; Z: ${zmin} to ${zmax}</div>
+      </div>
+      <button class="region-delete" onclick="deleteRegion(${i})">Delete</button>
+    </div>`;
+  }).join('');
+}
+
+function renameRegion(i, name) {
+  if (name.trim()) {
+    regions[i].name = name.trim();
+    updateRegionsOnMap();
+    document.getElementById('map-status').textContent = `Renamed to "${name.trim()}"`;
+    saveRegions();
+  }
+}
+
+async function saveRegions() {
+  try {
+    const res = await fetch(API + '/api/regions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(regions)
+    });
+    const data = await res.json();
+    document.getElementById('map-status').textContent = data.success
+      ? `Saved ${data.count} region(s)`
+      : `Error: ${data.error}`;
+  } catch(e) {
+    document.getElementById('map-status').textContent = `Save failed: ${e.message}`;
+  }
+}
+
+setInterval(fetchPlayers, 2000);
+setInterval(() => Promise.all([
+  fetchLog(API + '/logs/l').then(lines => { rawLogins = lines; renderLogins(); }),
+  fetchLog(API + '/logs/d').then(lines => {
+    const dr = [...lines].reverse().slice(0, 60).map(renderDeathEntry).filter(e => e);
+    document.getElementById('deaths-list').innerHTML = dr.length ? dr.join('') : '<div class="empty-state">No death and totems logs</div>';
+    document.getElementById('stat-deaths').textContent = lines.filter(l => l.includes('died') || l.includes('DIED') || l.includes('likely')).length;
+    document.getElementById('stat-totems').textContent = lines.filter(l => l.includes('TOTEM')).length;
+  }),
+  fetchLog(API + '/logs/p').then(lines => {
+    const pr = [...lines].reverse().slice(0, 60).map(renderElytraEntry).filter(e => e);
+    document.getElementById('planes-list').innerHTML = pr.length ? pr.join('') : '<div class="empty-state">No elytra sessions</div>';
+    document.getElementById('stat-elytras').textContent = lines.length;
+  }),
+  fetchLog(API + '/logs/r').then(lines => {
+    const rr = [...lines].reverse().slice(0, 60).map(renderRegionEntry).filter(e => e);
+    document.getElementById('regions-list').innerHTML = rr.length ? rr.join('') : '<div class="empty-state">No region activity</div>';
+  })
+]), 5000);
+
+fetchAll();
+</script>
+</body>
+</html>
