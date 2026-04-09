@@ -407,7 +407,35 @@
   @media (max-width: 900px) {
     .stats-row { grid-template-columns: repeat(2, 1fr); }
     .grid, .grid.wide { grid-template-columns: 1fr; }
-    .main { padding: 1rem; }
+    .main { padding: 0.75rem 1rem; }
+  }
+
+  @media (max-width: 600px) {
+    header { padding: 0 1rem; height: auto; min-height: 48px; flex-wrap: wrap; gap: 6px; padding-top: 8px; padding-bottom: 8px; }
+    .logo { font-size: 13px; }
+    .logo-icon { width: 24px; height: 24px; }
+    .nav-tabs { margin-left: 0; gap: 2px; }
+    .nav-tab { font-size: 11px; padding: 4px 8px; }
+    .header-right { gap: 8px; }
+    .refresh-btn { padding: 4px 8px; font-size: 11px; }
+    .stats-row { grid-template-columns: repeat(2, 1fr); gap: 8px; }
+    .stat-value { font-size: 22px; }
+    .stat-label { font-size: 10px; }
+    .main { padding: 0.5rem 0.75rem; }
+    .grid { gap: 10px; margin-bottom: 10px; }
+    .panel-body { max-height: 260px; }
+    .player-row { padding: 6px; gap: 6px; font-size: 11px; }
+    .player-avatar { width: 24px; height: 24px; }
+    .health-bar { width: 44px; }
+    .armor-badge { font-size: 9px; min-width: 28px; }
+    .world-badge { font-size: 8px; padding: 1px 4px; }
+    .log-entry { padding: 7px 10px; font-size: 11px; gap: 7px; }
+    .log-time { font-size: 9px; }
+    .log-detail { font-size: 10px; }
+    .map-canvas-wrapper { height: 380px; }
+    #map-player-list { max-height: 160px; min-width: 120px; font-size: 10px; }
+    .map-legend { font-size: 10px; padding: 7px 9px; }
+    .region-list { padding: 8px 10px; }
   }
 </style>
 </head>
@@ -955,6 +983,7 @@ function latLngToMc(ll) { return { x: Math.round(ll.lng), z: Math.round(-ll.lat)
 
 function initMapEditor() {
   if (map) return;
+  console.log('[MapEditor] Initializing map...');
 
   map = L.map('map-canvas', {
     crs: L.CRS.Simple,
@@ -975,12 +1004,14 @@ function initMapEditor() {
       const mcZ = coords.y * blocksPerLeafletTile;
       const sqX = Math.floor(mcX / blocksPerSqTile);
       const sqZ = Math.floor(mcZ / blocksPerSqTile);
-      return `${SQUAREMAP_URL}/tiles/${WORLD}/${sqZoom}/${sqX}_${sqZ}.png`;
+      return `/map-tile/${sqZoom}/${sqX}/${sqZ}.png`;
     }
   });
 
   new SquaremapLayer('', { tileSize: 512, minZoom: -3, maxZoom: 0, noWrap: false }).addTo(map);
+  console.log('[MapEditor] Tile layer added, setting view...');
   map.setView(mcToLatLng(-3500, -5600), -1);
+  console.log('[MapEditor] Map ready.');
 
   loadRegions();
   updatePlayerListPanel();

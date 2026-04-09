@@ -299,19 +299,17 @@ def process_players(players):
             if health is not None:
                 prev_health = last_health.get(name)
                 if prev_health is not None:
-                    # Totem vs Death detection: health was 0 and regen to 3+
-                    if prev_health == 0 and health >= 3:
+                    # Totem detection: health was 0, now recovered to 3-10 (totem gives 1 heart then regens)
+                    # Exclude respawn (0 -> 20 instantly) by capping at health <= 10
+                    if prev_health == 0 and 3 <= health <= 10:
                         zero_pos = health_zero_pos.get(name, (x, z))
-                        # Check if position changed significantly (teleport = death, no change = totem)
+                        # Check if position changed significantly (large teleport = respawn/death, not totem)
                         dist = math.sqrt((x - zero_pos[0]) ** 2 + (z - zero_pos[1]) ** 2) if zero_pos else 0
-                        if dist > 5:  # Teleported away = Death
-                            msg = f"Death {name} likely DIED (health: {prev_health}->{health}, armor: {armor}) | Teleported from X={int(zero_pos[0])}, Z={int(zero_pos[1])} to X={x}, Z={z}"
-                            log_event(msg, DEATHS_FILE)
-                            log_main("death", name, msg)
-                        else:  # No teleport = Totem
+                        if dist <= 5:  # No teleport = Totem
                             msg = f"Totem {name} used a TOTEM at X={x}, Z={z} (health: {prev_health}->{health}, armor: {armor})"
                             log_event(msg, DEATHS_FILE)
                             log_main("death", name, msg)
+                        # If dist > 5 it's ambiguous — skip logging, logout handler will catch the death
                         died_players[name] = False
                         health_zero_pos.pop(name, None)
                     # Track position when health reaches 0
@@ -349,8 +347,9 @@ def process_players(players):
                         # IMPROVED: Check for elytra - must have descent and low armor
                         has_low_armor = armor is not None and armor < ELYTRA_MIN_ARMOR  # < 9 = possibly elytra
                         is_descending = vertical_speed < -ELYTRA_MIN_DESCENT  # negative = going down
+                        is_teleport = horizontal_speed > 100  # teleport = unrealistic speed spike
                         
-                        if not previously_in_plane and horizontal_speed >= ENTER_THRESHOLD:
+                        if not previously_in_plane and horizontal_speed >= ENTER_THRESHOLD and not is_teleport:
                             if (now - last_toggle).total_seconds() >= ENTER_DELAY:
                                 # Extra check: must be descending AND low armor to enter elytra mode
                                 if is_descending and has_low_armor:
@@ -361,6 +360,15 @@ def process_players(players):
                                     plane_descent_samples[name] = [vertical_speed]
                                     plane_speed_samples[name] = [horizontal_speed]
                                     plane_altitude_gain[name] = 0.0
+                        elif previously_in_plane and is_teleport:
+                            # Teleport mid-flight — cancel the session silently, don't log it
+                            plane_state[name] = False
+                            plane_last_change[name] = now
+                            plane_entry_time.pop(name, None)
+                            plane_entry_pos.pop(name, None)
+                            plane_descent_samples.pop(name, None)
+                            plane_speed_samples.pop(name, None)
+                            plane_altitude_gain.pop(name, None)
                         elif previously_in_plane and horizontal_speed <= EXIT_THRESHOLD:
                             if (now - last_toggle).total_seconds() >= EXIT_DELAY:
                                 plane_state[name] = False
@@ -372,31 +380,24 @@ def process_players(players):
                                 altitude_gain = plane_altitude_gain.pop(name, 0.0)
                                 if entry_time:
                                     duration = int((now - entry_time).total_seconds())
-                                    # Verify it was actually elytra flight (had consistent descent)
                                     avg_descent = sum(descent_samples) / len(descent_samples) if descent_samples else 0
-                                    is_valid_elytra = (avg_descent < -ELYTRA_MIN_DESCENT and 
+                                    is_valid_elytra = (avg_descent < -ELYTRA_MIN_DESCENT and
                                                       avg_descent > -ELYTRA_MAX_DESCENT)
-                                    
-                                    # Detect fireworks usage
                                     max_speed = max(speed_samples) if speed_samples else 0
                                     has_speed_spike = max_speed > FIREWORKS_SPEED_THRESHOLD
                                     has_altitude_gain = altitude_gain > FIREWORKS_ALTITUDE_GAIN
                                     used_fireworks = has_speed_spike or has_altitude_gain
-                                    
                                     if duration >= MIN_SESSION_SECONDS and is_valid_elytra:
                                         distance = math.sqrt((x - entry_pos[0]) ** 2 + (z - entry_pos[1]) ** 2) if entry_pos else 0
                                         speed = distance / duration if duration > 0 else 0
                                         speed_str = f" {speed:.0f}blk/s" if speed > 0 else ""
                                         from_str = f"{int(entry_pos[0])},{int(entry_pos[1])}" if entry_pos else ""
                                         to_str = f"{x},{z}" if entry_pos else ""
-                                        coords_str = f" {from_str} → {to_str}" if entry_pos else ""
+                                        coords_str = f" {from_str} \u2192 {to_str}" if entry_pos else ""
                                         dist_str = f" {int(distance)} blocks" if distance > 0 else ""
-                                        
-                                        # Add fireworks indicator
                                         fireworks_str = ""
                                         if used_fireworks:
-                                            fireworks_str = " (Fireworks)" if has_speed_spike and has_altitude_gain else " (Fireworks)" if has_speed_spike else " (Fireworks - altitude)"
-                                        
+                                            fireworks_str = " (Fireworks)" if has_speed_spike else " (Fireworks - altitude)"
                                         msg = f"Elytra {name}{fireworks_str} time: {format_duration(duration)}{speed_str}{dist_str}{coords_str}"
                                         log_event(msg, PLANES_FILE)
                                         log_main("plane", name, msg)
@@ -461,7 +462,6 @@ def process_players(players):
         logged_out = seen_players - current_players
         for name in logged_out:
             plane_last_change.pop(name, None)
-            last_world.pop(name, None)
             health_zero_pos.pop(name, None)
             death_times.pop(name, None)
 
@@ -626,43 +626,23 @@ def proxy_players():
     except Exception as e:
         return jsonify({"error": str(e), "players": [], "max": 0}), 502
 
-@app.route("/map-tile/<path:tile_path>.png")
-def proxy_map_tile(tile_path):
-    """
-    Proxy Squaremap tiles. Flask <int:> doesn't match negatives, so use <path:>.
-    tile_path is like '-1/-4/-6'
-    """
+@app.route("/map-tile/<int:zoom>/<path:coords>.png")
+def proxy_map_tile(zoom, coords):
+    """Proxy Squaremap tiles — JS computes sqZoom/sqX/sqZ directly."""
     try:
-        parts = tile_path.split('/')
-        lz, lx, ly = int(parts[0]), int(parts[1]), int(parts[2])
+        parts = coords.split('/')
+        sq_x, sq_z = int(parts[0]), int(parts[1])
     except (ValueError, IndexError):
         return '', 400
-
-    # Map Leaflet zoom to Squaremap zoom
-    # Leaflet zoom -3 -> sqZoom 0 (4096 blocks/tile, most zoomed out)
-    # Leaflet zoom -2 -> sqZoom 1 (2048 blocks/tile)
-    # Leaflet zoom -1 -> sqZoom 2 (1024 blocks/tile)
-    # Leaflet zoom  0 -> sqZoom 3 (512 blocks/tile, most zoomed in)
-    sq_zoom = max(0, min(3, lz + 3))
-    blocks_per_tile = 512 * (2 ** (3 - sq_zoom))
-
-    # With tileSize=512 in Leaflet CRS.Simple:
-    # tile (lx, ly) covers MC coords [lx*512, (lx+1)*512) x [ly*512, (ly+1)*512)
-    # Squaremap tile = floor(mc_coord / blocks_per_tile)
-    mc_x = lx * 512
-    mc_z = ly * 512
-    sq_x = math.floor(mc_x / blocks_per_tile)
-    sq_z = math.floor(mc_z / blocks_per_tile)
-
-    tile_url = f"http://103.243.173.194:7188/tiles/minecraft_overworld/{sq_zoom}/{sq_x}_{sq_z}.png"
+    base = API_URL.rsplit('/tiles', 1)[0]
+    tile_url = f"{base}/tiles/minecraft_overworld/{zoom}/{sq_x}_{sq_z}.png"
     try:
+        from flask import Response
         resp = requests.get(tile_url, timeout=3)
         if resp.status_code == 200:
-            from flask import Response
             return Response(resp.content, mimetype='image/png',
-                          headers={'Cache-Control': 'public, max-age=10'})
-        else:
-            return '', 404
+                            headers={'Cache-Control': 'public, max-age=10'})
+        return '', 404
     except Exception:
         return '', 502
 
