@@ -640,6 +640,8 @@ let logoutMarkers = {};
 let regionLayers = [];
 let currentRectangle = null;
 let drawModeActive = false;
+let elytraLines = []; // {polyline, expiresAt}
+const ELYTRA_LINE_EXPIRY_MS = 8 * 60 * 60 * 1000; // 8 hours
 
 function switchMainTab(tab, btn) {
   document.querySelectorAll('.nav-tab').forEach(t => t.classList.remove('active'));
@@ -714,21 +716,17 @@ function renderLoginEntry(line) {
   const { time, body } = parseEntry(line);
   const isIn = body.includes('logged in');
   const isOut = body.includes('logged out');
-
-  // Must contain actual login/logout events
   if (!isIn && !isOut) return '';
-
   const type = isIn ? 'in' : 'out';
   const player = extractPlayer(body);
-
-  // Validate player name (Minecraft usernames are 3-16 chars, alphanumeric + underscore)
-  if (!player || player.length < 3 || !/^[a-zA-Z0-9_]+$/.test(player)) return '';
-
+  if (!player || player.length < 3 || !/^[a-zA-Z0-9_*]+$/.test(player)) return '';
   const cm = body.match(/X=([-\d]+).*?Z=([-\d]+)/);
   const coords = cm ? `X:${cm[1]} Z:${cm[2]}` : '';
+  const cx = cm ? cm[1] : null, cz = cm ? cm[2] : null;
+  const clickAttr = cx ? `onclick="panToCoords(${cx},${cz})" style="cursor:pointer;"` : '';
   const dm = body.match(/time:\s*([\d:]+)/);
   const duration = dm ? dm[1] : '';
-  return `<div class="log-entry">
+  return `<div class="log-entry" ${clickAttr}>
     <div class="log-icon ${type}">${isIn ? 'In' : 'Out'}</div>
     <div class="log-content">
       <div class="log-player">${player}</div>
@@ -762,10 +760,13 @@ function renderDeathEntry(line) {
       if (coordMatch) {
         coords = `X:${coordMatch[1]} Z:${coordMatch[2]}`;
       }
-      // Extract closest players - look for quoted names
-      const quotedMatch = body.match(/"([^"]+)"/g);
+      // Extract closest players with distances - format: "name"(123blk)
+      const quotedMatch = body.match(/"([^"]+)"\((\d+)blk\)/g);
       if (quotedMatch && quotedMatch.length > 0) {
-        closest = quotedMatch.map(q => q.replace(/"/g, '')).join(', ');
+        closest = quotedMatch.map(q => {
+          const m = q.match(/"([^"]+)"\((\d+)blk\)/);
+          return m ? `${m[1]} (${m[2]}blk)` : q.replace(/"/g, '');
+        }).join(', ');
       }
     }
   } else {
@@ -777,9 +778,20 @@ function renderDeathEntry(line) {
     if (hpm) hpChange = `HP: ${hpm[1]}→${hpm[2]}`;
   }
 
-  if (!player || player.length < 3 || !/^[a-zA-Z0-9_]+$/.test(player)) return '';
+  if (!player || player.length < 3 || !/^[a-zA-Z0-9_*]+$/.test(player)) return '';
 
-  return `<div class="log-entry">
+  // Parse raw coords for click handler
+  let cx = null, cz = null;
+  if (body.includes('died |') || body.includes('died|')) {
+    const cm2 = body.match(/x:([-\d]+)\s+Z:([-\d]+)/i);
+    if (cm2) { cx = cm2[1]; cz = cm2[2]; }
+  } else {
+    const cm2 = body.match(/X=([-\d]+).*?Z=([-\d]+)/);
+    if (cm2) { cx = cm2[1]; cz = cm2[2]; }
+  }
+  const clickAttr = cx ? `onclick="panToCoords(${cx},${cz})" style="cursor:pointer;"` : '';
+
+  return `<div class="log-entry" ${clickAttr}>
     <div class="log-icon ${type}">${isTotem ? 'T' : 'X'}</div>
     <div class="log-content">
       <div class="log-player">${player} <span style="color:var(--muted);font-weight:400">${isTotem ? 'used totem' : 'died'}</span></div>
@@ -791,14 +803,9 @@ function renderDeathEntry(line) {
 
 function renderElytraEntry(line) {
   const { time, body } = parseEntry(line);
-
-  // Must contain elytra flight info
   if (!body.includes('time:')) return '';
-
   const player = extractPlayer(body);
-
-  // Validate player name
-  if (!player || player.length < 3 || !/^[a-zA-Z0-9_]+$/.test(player)) return '';
+  if (!player || player.length < 3 || !/^[a-zA-Z0-9_*]+$/.test(player)) return '';
 
   const dm = body.match(/time:\s+([\d:]+)/);
   const duration = dm ? dm[1] : '';
@@ -806,16 +813,30 @@ function renderElytraEntry(line) {
   const speed = sm ? `${sm[1]} blk/s` : '';
   const bm = body.match(/(\d+)\s+blocks/);
   const blocks = bm ? `${bm[1]} blocks` : '';
-  const fm = body.match(/(\d+,-?\d+)\s*→/);
-  const fromCoord = fm ? fm[1] : '';
-  const tm2 = body.match(/→\s*(\d+,-?\d+)/);
-  const toCoord = tm2 ? tm2[1] : '';
-  const coords = fromCoord && toCoord ? `${fromCoord} → ${toCoord}` : '';
-  return `<div class="log-entry">
+  // Parse negative coords: e.g. -3500,-5600 → -2800,-4900
+  const fm = body.match(/([-\d]+),([-\d]+)\s*\u2192/);
+  const fromCoord = fm ? `${fm[1]},${fm[2]}` : '';
+  const tm2 = body.match(/\u2192\s*([-\d]+),([-\d]+)/);
+  const toCoord = tm2 ? `${tm2[1]},${tm2[2]}` : '';
+  const coords = fromCoord && toCoord ? `${fromCoord} \u2192 ${toCoord}` : '';
+
+  // Click: pan to from-coord; if both coords exist, also draw the flight line
+  let clickAttr = '';
+  if (fromCoord) {
+    const [x1, z1] = fromCoord.split(',').map(Number);
+    if (toCoord) {
+      const [x2, z2] = toCoord.split(',').map(Number);
+      clickAttr = `onclick="panToCoords(${x1},${z1}); if(typeof addElytraLine==='function') addElytraLine(${x1},${z1},${x2},${z2},'${player}');" style="cursor:pointer;"`;
+    } else {
+      clickAttr = `onclick="panToCoords(${x1},${z1})" style="cursor:pointer;"`;
+    }
+  }
+
+  return `<div class="log-entry" ${clickAttr}>
     <div class="log-icon elytra">~</div>
     <div class="log-content">
       <div class="log-player">${player}</div>
-      <div class="log-detail">${duration ? `${duration}` : ''}${speed ? ` · ${speed}` : ''}${blocks ? ` · ${blocks}` : ''}${coords ? ` · <span class="coords">${coords}</span>` : ''}</div>
+      <div class="log-detail">${duration}${speed ? ` \u00b7 ${speed}` : ''}${blocks ? ` \u00b7 ${blocks}` : ''}${coords ? ` \u00b7 <span class="coords">${coords}</span>` : ''}</div>
     </div>
     <div class="log-time">${time}</div>
   </div>`;
@@ -833,9 +854,11 @@ function renderRegionEntry(line) {
 
   const cm = body.match(/at\s+X=([-\d]+),\s*Z=([-\d]+)/);
   const coords = cm ? `X:${cm[1]} Z:${cm[2]}` : '';
+  const cx = cm ? cm[1] : null, cz = cm ? cm[2] : null;
+  const clickAttr = cx ? `onclick="panToCoords(${cx},${cz})" style="cursor:pointer;"` : '';
   const sm = body.match(/spent\s+([\d:]+)/);
   const spent = sm ? sm[1] : '';
-  return `<div class="log-entry">
+  return `<div class="log-entry" ${clickAttr}>
     <div class="log-icon region">${entered ? 'In' : 'Out'}</div>
     <div class="log-content">
       <div class="log-player">${player} <span style="color:var(--muted);font-weight:400">${entered ? 'entered' : 'left'} ${region}</span></div>
@@ -1077,6 +1100,50 @@ function updatePlayerListPanel() {
 function panToPlayer(x, z) {
   const latlng = mcToLatLng(x, z);
   map.setView(latlng, -1);
+}
+
+function panToCoords(x, z) {
+  // Switch to map editor tab first, init if needed, then pan
+  const mapBtn = document.querySelector('.nav-tab:nth-child(2)');
+  if (mapBtn) {
+    document.querySelectorAll('.nav-tab').forEach(t => t.classList.remove('active'));
+    document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+    mapBtn.classList.add('active');
+    document.getElementById('map-editor-tab').classList.add('active');
+    initMapEditor();
+  }
+  // Small delay to let map render if just initialized
+  setTimeout(() => {
+    if (map) map.setView(mcToLatLng(x, z), 0);
+  }, 150);
+}
+
+function addElytraLine(x1, z1, x2, z2, playerName) {
+  if (!map) return;
+  // Expire old lines before adding new ones
+  expireElytraLines();
+  const from = mcToLatLng(x1, z1);
+  const to = mcToLatLng(x2, z2);
+  const polyline = L.polyline([from, to], {
+    color: '#38bdf8',
+    weight: 2,
+    opacity: 0.7,
+    dashArray: '6,4'
+  });
+  polyline.bindPopup(`<b>${playerName}</b><br>Elytra path<br><span style="font-family:monospace;font-size:11px">${x1},${z1} → ${x2},${z2}</span>`);
+  polyline.addTo(map);
+  elytraLines.push({ polyline, expiresAt: Date.now() + ELYTRA_LINE_EXPIRY_MS });
+}
+
+function expireElytraLines() {
+  const now = Date.now();
+  elytraLines = elytraLines.filter(entry => {
+    if (entry.expiresAt <= now) {
+      if (map) map.removeLayer(entry.polyline);
+      return false;
+    }
+    return true;
+  });
 }
 
 function startDrawing(e) {
@@ -1338,6 +1405,7 @@ async function saveRegions() {
 }
 
 setInterval(fetchPlayers, 2000);
+setInterval(() => expireElytraLines(), 60 * 1000); // check expiry every minute
 setInterval(() => Promise.all([
   fetchLog(API + '/logs/l').then(lines => { rawLogins = lines; renderLogins(); }),
   fetchLog(API + '/logs/d').then(lines => {

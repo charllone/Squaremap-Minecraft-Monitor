@@ -388,10 +388,10 @@ def process_players(players):
                                     has_altitude_gain = altitude_gain > FIREWORKS_ALTITUDE_GAIN
                                     used_fireworks = has_speed_spike or has_altitude_gain
                                     if duration >= MIN_SESSION_SECONDS and is_valid_elytra:
-                                        distance = math.sqrt((x - entry_pos[0]) ** 2 + (z - entry_pos[1]) ** 2) if entry_pos else 0
+                                        distance = math.sqrt((x - entry_pos[0]) ** 2 + (z - entry_pos[2]) ** 2) if entry_pos else 0
                                         speed = distance / duration if duration > 0 else 0
                                         speed_str = f" {speed:.0f}blk/s" if speed > 0 else ""
-                                        from_str = f"{int(entry_pos[0])},{int(entry_pos[1])}" if entry_pos else ""
+                                        from_str = f"{int(entry_pos[0])},{int(entry_pos[2])}" if entry_pos else ""
                                         to_str = f"{x},{z}" if entry_pos else ""
                                         coords_str = f" {from_str} \u2192 {to_str}" if entry_pos else ""
                                         dist_str = f" {int(distance)} blocks" if distance > 0 else ""
@@ -511,8 +511,8 @@ def process_players(players):
 
                 nearby_str = ""
                 if top_2:
-                    closest_names = " ".join([f'"{player}"' for _, player in top_2])
-                    nearby_str = f" {closest_names}"
+                    closest_parts = [f'"{pname}"({int(d)}blk)' for d, pname in top_2]
+                    nearby_str = f" {' '.join(closest_parts)}"
 
                 # Format: user3 died | x:0 Z:-3 "player1" "player2"
                 dmsg = f"{name} died | x:{x} Z:{z}{nearby_str}"
