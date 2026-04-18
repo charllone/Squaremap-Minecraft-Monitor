@@ -643,7 +643,12 @@ let drawModeActive = false;
 let elytraLines = []; // {polyline, expiresAt}
 const ELYTRA_LINE_EXPIRY_MS = 8 * 60 * 60 * 1000; // 8 hours
 
+function closeAllPopups() {
+  if (map) map.closePopup();
+}
+
 function switchMainTab(tab, btn) {
+  closeAllPopups();
   document.querySelectorAll('.nav-tab').forEach(t => t.classList.remove('active'));
   document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
   btn.classList.add('active');
@@ -652,6 +657,7 @@ function switchMainTab(tab, btn) {
 }
 
 function switchTab(filter, btn) {
+  closeAllPopups();
   loginsFilter = filter;
   document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
   btn.classList.add('active');
@@ -820,13 +826,13 @@ function renderElytraEntry(line) {
   const toCoord = tm2 ? `${tm2[1]},${tm2[2]}` : '';
   const coords = fromCoord && toCoord ? `${fromCoord} \u2192 ${toCoord}` : '';
 
-  // Click: pan to from-coord; if both coords exist, also draw the flight line
+  // Click: pan to end-coord and draw the flight line
   let clickAttr = '';
   if (fromCoord) {
     const [x1, z1] = fromCoord.split(',').map(Number);
     if (toCoord) {
       const [x2, z2] = toCoord.split(',').map(Number);
-      clickAttr = `onclick="panToCoords(${x1},${z1}); if(typeof addElytraLine==='function') addElytraLine(${x1},${z1},${x2},${z2},'${player}');" style="cursor:pointer;"`;
+      clickAttr = `onclick="panToCoords(${x2},${z2}); if(typeof addElytraLine==='function') addElytraLine(${x1},${z1},${x2},${z2},'${player}');" style="cursor:pointer;"`;
     } else {
       clickAttr = `onclick="panToCoords(${x1},${z1})" style="cursor:pointer;"`;
     }
@@ -983,9 +989,9 @@ async function fetchAll() {
 
   const planeLines = await fetchLog(API + '/logs/p');
   const planeEl = document.getElementById('planes-list');
-  const pr = [...planeLines].reverse().slice(0, 60);
-  planeEl.innerHTML = pr.length ? pr.map(renderElytraEntry).join('') : '<div class="empty-state">No elytra sessions</div>';
-  document.getElementById('stat-elytras').textContent = planeLines.length;
+  const pr = [...planeLines].reverse().slice(0, 60).map(renderElytraEntry).filter(e => e);
+  planeEl.innerHTML = pr.length ? pr.join('') : '<div class="empty-state">No elytra sessions</div>';
+  document.getElementById('stat-elytras').textContent = pr.length;
 
   const regionLines = await fetchLog(API + '/logs/r');
   const regionEl = document.getElementById('regions-list');
@@ -1041,6 +1047,15 @@ function initMapEditor() {
   map.on('mousedown', startDrawing);
   map.on('mousemove', updateDrawing);
   map.on('mouseup', finishDrawing);
+  // Close popups on map background click only (not on markers/polylines which have their own popups)
+  map.on('click', (e) => {
+    // Only close if clicking on empty map, not on a marker or polyline
+    if (e.target === map || e.originalEvent.target.classList.contains('leaflet-container')) {
+      map.closePopup();
+    }
+  });
+  map.on('drag', closeAllPopups);
+  map.on('zoom', closeAllPopups);
 }
 
 function updatePlayerListPanel() {
@@ -1098,11 +1113,13 @@ function updatePlayerListPanel() {
 }
 
 function panToPlayer(x, z) {
+  closeAllPopups();
   const latlng = mcToLatLng(x, z);
   map.setView(latlng, -1);
 }
 
 function panToCoords(x, z) {
+  closeAllPopups();
   // Switch to map editor tab first, init if needed, then pan
   const mapBtn = document.querySelector('.nav-tab:nth-child(2)');
   if (mapBtn) {
@@ -1132,14 +1149,36 @@ function addElytraLine(x1, z1, x2, z2, playerName) {
   });
   polyline.bindPopup(`<b>${playerName}</b><br>Elytra path<br><span style="font-family:monospace;font-size:11px">${x1},${z1} → ${x2},${z2}</span>`);
   polyline.addTo(map);
-  elytraLines.push({ polyline, expiresAt: Date.now() + ELYTRA_LINE_EXPIRY_MS });
+  
+  // Add arrowhead at endpoint to show direction
+  const dx = x2 - x1;
+  const dz = z2 - z1;
+  const angle = Math.atan2(dz, dx) * 180 / Math.PI + 90;
+  
+  const arrowSvg = `<svg width="28" height="28" viewBox="0 0 28 28" xmlns="http://www.w3.org/2000/svg" style="transform: rotate(${angle}deg); display: block; filter: drop-shadow(0 0 1px #000);">
+    <path d="M 14 2 L 24 22 L 14 16 L 4 22 Z" fill="#38bdf8" stroke="#0c4a6e" stroke-width="1" stroke-linejoin="round"/>
+  </svg>`;
+  const arrowIcon = L.divIcon({
+    className: '',
+    html: arrowSvg,
+    iconSize: [28, 28],
+    iconAnchor: [14, 14]
+  });
+  const arrowMarker = L.marker(to, { icon: arrowIcon });
+  arrowMarker.bindPopup(`<b>${playerName}</b><br>Elytra path (endpoint)<br><span style="font-family:monospace;font-size:11px">${x1},${z1} → ${x2},${z2}</span>`);
+  arrowMarker.addTo(map);
+  
+  elytraLines.push({ polyline, expiresAt: Date.now() + ELYTRA_LINE_EXPIRY_MS, arrow: arrowMarker });
 }
 
 function expireElytraLines() {
   const now = Date.now();
   elytraLines = elytraLines.filter(entry => {
     if (entry.expiresAt <= now) {
-      if (map) map.removeLayer(entry.polyline);
+      if (map) {
+        map.removeLayer(entry.polyline);
+        if (entry.arrow) map.removeLayer(entry.arrow);
+      }
       return false;
     }
     return true;
@@ -1256,6 +1295,11 @@ function updatePlayersOnMap() {
     const latlng = mcToLatLng(player.x, player.z);
     if (playerMarkers[player.name]) {
       playerMarkers[player.name].setLatLng(latlng);
+      // Update popup with fresh health/armor
+      const hp = player.health ?? '?';
+      const armor = player.armor ?? '?';
+      const y = player.y ?? '?';
+      playerMarkers[player.name].setPopupContent(`<b>${player.name}</b><br>X: ${player.x}, Y: ${y}, Z: ${player.z}<br>HP: ${hp}/20 | Armor: ${armor}`);
       return;
     }
     const headUrl = `https://mc-heads.net/avatar/${player.uuid || player.name}/24`;
@@ -1269,7 +1313,7 @@ function updatePlayersOnMap() {
       iconAnchor: [12, 12]
     });
     const marker = L.marker(latlng, { icon });
-    marker.bindPopup(`<b>${player.name}</b><br>X: ${player.x}, Z: ${player.z}<br>HP: ${player.health}/20 | Armor: ${player.armor}`);
+    marker.bindPopup(`<b>${player.name}</b><br>X: ${player.x}, Y: ${player.y ?? '?'}, Z: ${player.z}<br>HP: ${player.health ?? '?'}/20 | Armor: ${player.armor ?? '?'}`);
     marker.addTo(map);
     playerMarkers[player.name] = marker;
   });
@@ -1293,7 +1337,7 @@ function updatePlayersOnMap() {
       iconAnchor: [12, 12]
     });
     const marker = L.marker(latlng, { icon });
-    marker.bindPopup(`<b>${name}</b> (DEAD)<br>X: ${state.x}, Z: ${state.z}<br>HP: 0/20 | Armor: ${state.armor}<br><span style="font-size:10px;color:#fb923c;">World: ${state.world}</span>`);
+    marker.bindPopup(`<b>${name}</b> (DEAD)<br>X: ${state.x}, Y: ${state.y ?? '?'}, Z: ${state.z}<br>HP: 0/20 | Armor: ${state.armor}<br><span style="font-size:10px;color:#fb923c;">World: ${state.world}</span>`);
     marker.addTo(map);
     playerMarkers[name] = marker;
   });
@@ -1339,7 +1383,7 @@ function updatePlayersOnMap() {
           iconAnchor: [12, 12]
         });
         const marker = L.marker(latlng, { icon });
-        marker.bindPopup(`<b>${name}</b> (logged out)<br>X: ${state.x}, Z: ${state.z}<br>HP: ${state.health}/20 | Armor: ${state.armor}<br><span style="font-size:10px;color:#666;">${state.timestamp}</span>`);
+        marker.bindPopup(`<b>${name}</b> (logged out)<br>X: ${state.x}, Y: ${state.y ?? '?'}, Z: ${state.z}<br>HP: ${state.health}/20 | Armor: ${state.armor}<br><span style="font-size:10px;color:#666;">${state.timestamp}</span>`);
         marker.addTo(map);
         logoutMarkers[name] = marker;
       });
@@ -1417,7 +1461,7 @@ setInterval(() => Promise.all([
   fetchLog(API + '/logs/p').then(lines => {
     const pr = [...lines].reverse().slice(0, 60).map(renderElytraEntry).filter(e => e);
     document.getElementById('planes-list').innerHTML = pr.length ? pr.join('') : '<div class="empty-state">No elytra sessions</div>';
-    document.getElementById('stat-elytras').textContent = lines.length;
+    document.getElementById('stat-elytras').textContent = pr.length;
   }),
   fetchLog(API + '/logs/r').then(lines => {
     const rr = [...lines].reverse().slice(0, 60).map(renderRegionEntry).filter(e => e);

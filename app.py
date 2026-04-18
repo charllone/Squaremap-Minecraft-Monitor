@@ -7,6 +7,7 @@ import math
 import re
 import json
 import os
+import statistics
 from flask import Flask, jsonify, send_file, request
 
 # Hide Flask logs
@@ -113,16 +114,19 @@ error_start_time = None
 GMT8 = timezone(timedelta(hours=8))
 
 # Thresholds
-MIN_SESSION_SECONDS = 0  # for login sessions and plane sessions (0 = immediate)
-ENTER_THRESHOLD = 14.0    # plane enter speed (blocks/sec)
-EXIT_THRESHOLD = 2.0      # plane exit speed (blocks/sec)
-ELYTRA_MIN_DESCENT = 0.03   # minimum descent rate (blocks/sec) for elytra
-ELYTRA_MAX_DESCENT = 0.2    # maximum descent rate (blocks/sec) for elytra
-ELYTRA_MIN_ARMOR = 9        # elytra occupies chest slot, so armor < 9 means possibly elytra
-FIREWORKS_SPEED_THRESHOLD = 25.0  # speed spike threshold for fireworks detection (blocks/sec)
-FIREWORKS_ALTITUDE_GAIN = 2.0  # minimum altitude gain to detect fireworks (blocks)
-ENTER_DELAY = 1.0         # seconds
-EXIT_DELAY = 2.0          # seconds
+MIN_SESSION_SECONDS = 0       # minimum session time to log
+ELYTRA_MIN_DURATION = 3       # minimum flight seconds (doc recommendation #2)
+ELYTRA_MIN_DISTANCE = 50      # minimum flight distance in blocks (doc recommendation #1)
+ENTER_THRESHOLD = 14.0        # horizontal speed to trigger elytra entry (matches stall speed 14.4 m/s)
+EXIT_THRESHOLD = 2.0          # horizontal speed to trigger elytra exit
+ELYTRA_MIN_DESCENT = 0.01     # minimum downward velocity (blocks/sec)
+ELYTRA_MAX_DESCENT = 10.0     # maximum downward velocity — raised for steep divers (wiki: up to 78 blk/s steep)
+ELYTRA_MIN_ARMOR = 9          # kept for reference, not used in detection
+FIREWORKS_SPEED_THRESHOLD = 25.0   # speed spike for fireworks (conservative below 33.5 wiki value)
+FIREWORKS_ALTITUDE_GAIN = 2.0     # altitude gain to flag fireworks
+ENTER_DELAY = 1.0             # seconds before confirming entry
+EXIT_DELAY = 1.5              # seconds before confirming exit (was 2.0, doc recommendation #3)
+SQUAREMAP_UPDATE_RATE = 1.0   # squaremap updates player positions every 1 second
 
 def timestamp() -> str:
     return datetime.now(GMT8).strftime("[%Y-%m-%d %I:%M:%S %p GMT+8]")
@@ -332,87 +336,104 @@ def process_players(players):
             if name in last_positions:
                 old_x, old_z, old_y, old_time = last_positions[name]
                 dt = (now - old_time).total_seconds()
-                if dt > 0:
+                
+                # Skip stale polls — squaremap updates every 1s, we poll every 0.5s
+                # If position hasn't changed, this is a stale read: skip to avoid false exits
+                position_changed = (x != old_x or z != old_z or y != old_y)
+                
+                if dt > 0 and position_changed:
                     horizontal_distance = math.sqrt((x - old_x) ** 2 + (z - old_z) ** 2)
-                    horizontal_speed = horizontal_distance / dt
+                    # Normalize speed to per-second using actual dt
+                    # But clamp dt to SQUAREMAP_UPDATE_RATE to avoid underestimating speed
+                    # when two consecutive squaremap ticks are captured in one poll
+                    effective_dt = max(dt, SQUAREMAP_UPDATE_RATE)
+                    horizontal_speed = horizontal_distance / effective_dt
                     dy = y - old_y
-                    vertical_speed = dy / dt  # positive = ascending, negative = descending
-                    
-                    if horizontal_speed > 0:
-                        previously_in_plane = plane_state.get(name, False)
-                        if name not in plane_last_change:
-                            plane_last_change[name] = now
-                        last_toggle = plane_last_change[name]
-                        
-                        # IMPROVED: Check for elytra - must have descent and low armor
-                        has_low_armor = armor is not None and armor < ELYTRA_MIN_ARMOR  # < 9 = possibly elytra
-                        is_descending = vertical_speed < -ELYTRA_MIN_DESCENT  # negative = going down
-                        is_teleport = horizontal_speed > 100  # teleport = unrealistic speed spike
-                        
-                        if not previously_in_plane and horizontal_speed >= ENTER_THRESHOLD and not is_teleport:
-                            if (now - last_toggle).total_seconds() >= ENTER_DELAY:
-                                # Extra check: must be descending AND low armor to enter elytra mode
-                                if is_descending and has_low_armor:
-                                    plane_state[name] = True
-                                    plane_last_change[name] = now
-                                    plane_entry_time[name] = now
-                                    plane_entry_pos[name] = (x, y, z)
-                                    plane_descent_samples[name] = [vertical_speed]
-                                    plane_speed_samples[name] = [horizontal_speed]
-                                    plane_altitude_gain[name] = 0.0
-                        elif previously_in_plane and is_teleport:
-                            # Teleport mid-flight — cancel the session silently, don't log it
+                    vertical_speed = dy / effective_dt
+
+                    previously_in_plane = plane_state.get(name, False)
+                    if name not in plane_last_change:
+                        plane_last_change[name] = now
+                    last_toggle = plane_last_change[name]
+
+                    is_descending = vertical_speed < -ELYTRA_MIN_DESCENT
+                    is_teleport = horizontal_speed > 100
+
+                    if not previously_in_plane and horizontal_speed >= ENTER_THRESHOLD and not is_teleport:
+                        if (now - last_toggle).total_seconds() >= ENTER_DELAY:
+                            if is_descending:
+                                plane_state[name] = True
+                                plane_last_change[name] = now
+                                plane_entry_time[name] = now
+                                plane_entry_pos[name] = (x, y, z)
+                                plane_descent_samples[name] = [vertical_speed]
+                                plane_speed_samples[name] = [horizontal_speed]
+                                plane_altitude_gain[name] = 0.0
+
+                    elif previously_in_plane and is_teleport:
+                        # Teleport mid-flight — cancel silently
+                        plane_state[name] = False
+                        plane_last_change[name] = now
+                        plane_entry_time.pop(name, None)
+                        plane_entry_pos.pop(name, None)
+                        plane_descent_samples.pop(name, None)
+                        plane_speed_samples.pop(name, None)
+                        plane_altitude_gain.pop(name, None)
+
+                    elif previously_in_plane and horizontal_speed <= EXIT_THRESHOLD:
+                        if (now - last_toggle).total_seconds() >= EXIT_DELAY:
                             plane_state[name] = False
                             plane_last_change[name] = now
-                            plane_entry_time.pop(name, None)
-                            plane_entry_pos.pop(name, None)
-                            plane_descent_samples.pop(name, None)
-                            plane_speed_samples.pop(name, None)
-                            plane_altitude_gain.pop(name, None)
-                        elif previously_in_plane and horizontal_speed <= EXIT_THRESHOLD:
-                            if (now - last_toggle).total_seconds() >= EXIT_DELAY:
-                                plane_state[name] = False
-                                plane_last_change[name] = now
-                                entry_time = plane_entry_time.pop(name, None)
-                                entry_pos = plane_entry_pos.pop(name, None)
-                                descent_samples = plane_descent_samples.pop(name, [])
-                                speed_samples = plane_speed_samples.pop(name, [])
-                                altitude_gain = plane_altitude_gain.pop(name, 0.0)
-                                if entry_time:
-                                    duration = int((now - entry_time).total_seconds())
-                                    avg_descent = sum(descent_samples) / len(descent_samples) if descent_samples else 0
-                                    is_valid_elytra = (avg_descent < -ELYTRA_MIN_DESCENT and
-                                                      avg_descent > -ELYTRA_MAX_DESCENT)
-                                    max_speed = max(speed_samples) if speed_samples else 0
-                                    has_speed_spike = max_speed > FIREWORKS_SPEED_THRESHOLD
-                                    has_altitude_gain = altitude_gain > FIREWORKS_ALTITUDE_GAIN
-                                    used_fireworks = has_speed_spike or has_altitude_gain
-                                    if duration >= MIN_SESSION_SECONDS and is_valid_elytra:
-                                        distance = math.sqrt((x - entry_pos[0]) ** 2 + (z - entry_pos[2]) ** 2) if entry_pos else 0
-                                        speed = distance / duration if duration > 0 else 0
-                                        speed_str = f" {speed:.0f}blk/s" if speed > 0 else ""
+                            entry_time = plane_entry_time.pop(name, None)
+                            entry_pos = plane_entry_pos.pop(name, None)
+                            descent_samples = plane_descent_samples.pop(name, [])
+                            speed_samples = plane_speed_samples.pop(name, [])
+                            altitude_gain = plane_altitude_gain.pop(name, 0.0)
+
+                            if entry_time:
+                                duration = int((now - entry_time).total_seconds())
+                                distance = math.sqrt((x - entry_pos[0]) ** 2 + (z - entry_pos[2]) ** 2) if entry_pos else 0
+
+                                # Doc recommendation #1: min distance filter
+                                # Doc recommendation #2: min duration filter
+                                if duration >= ELYTRA_MIN_DURATION and distance >= ELYTRA_MIN_DISTANCE:
+                                    # Doc recommendation #4: use median instead of average for outlier resistance
+                                    median_descent = statistics.median(descent_samples) if descent_samples else 0
+                                    is_valid_elytra = (median_descent < -ELYTRA_MIN_DESCENT and
+                                                       median_descent > -ELYTRA_MAX_DESCENT)
+
+                                    if is_valid_elytra:
+                                        max_speed = max(speed_samples) if speed_samples else 0
+                                        has_speed_spike = max_speed > FIREWORKS_SPEED_THRESHOLD
+                                        has_altitude_gain = altitude_gain > FIREWORKS_ALTITUDE_GAIN
+                                        used_fireworks = has_speed_spike or has_altitude_gain
+
+                                        avg_speed = distance / duration if duration > 0 else 0
+                                        speed_str = f" {avg_speed:.0f}blk/s" if avg_speed > 0 else ""
                                         from_str = f"{int(entry_pos[0])},{int(entry_pos[2])}" if entry_pos else ""
-                                        to_str = f"{x},{z}" if entry_pos else ""
+                                        to_str = f"{x},{z}"
                                         coords_str = f" {from_str} \u2192 {to_str}" if entry_pos else ""
-                                        dist_str = f" {int(distance)} blocks" if distance > 0 else ""
+                                        dist_str = f" {int(distance)} blocks"
                                         fireworks_str = ""
                                         if used_fireworks:
                                             fireworks_str = " (Fireworks)" if has_speed_spike else " (Fireworks - altitude)"
+
                                         msg = f"Elytra {name}{fireworks_str} time: {format_duration(duration)}{speed_str}{dist_str}{coords_str}"
                                         log_event(msg, PLANES_FILE)
                                         log_main("plane", name, msg)
-                        elif previously_in_plane:
-                            # Track descent samples and speed while flying
-                            if name in plane_descent_samples and len(plane_descent_samples[name]) < 100:
-                                plane_descent_samples[name].append(vertical_speed)
-                            if name in plane_speed_samples and len(plane_speed_samples[name]) < 100:
-                                plane_speed_samples[name].append(horizontal_speed)
-                            # Track altitude gain (fireworks detection)
-                            if name in plane_altitude_gain and entry_pos:
-                                entry_y = plane_entry_pos[name][1] if len(plane_entry_pos[name]) > 1 else 0
-                                altitude_gain_now = y - entry_y
-                                if altitude_gain_now > plane_altitude_gain[name]:
-                                    plane_altitude_gain[name] = altitude_gain_now
+
+                    elif previously_in_plane:
+                        # Accumulate samples during flight (only on real position updates)
+                        if name in plane_descent_samples and len(plane_descent_samples[name]) < 100:
+                            plane_descent_samples[name].append(vertical_speed)
+                        if name in plane_speed_samples and len(plane_speed_samples[name]) < 100:
+                            plane_speed_samples[name].append(horizontal_speed)
+                        # Track max altitude gain for fireworks detection
+                        if name in plane_altitude_gain and name in plane_entry_pos:
+                            entry_y = plane_entry_pos[name][1]
+                            altitude_gain_now = y - entry_y
+                            if altitude_gain_now > plane_altitude_gain[name]:
+                                plane_altitude_gain[name] = altitude_gain_now
 
             last_positions[name] = (x, z, y, now)
 
@@ -483,6 +504,7 @@ def process_players(players):
             if x is not None and z is not None:
                 last_logout_state[name] = {
                     "x": x,
+                    "y": last_pos[2] if last_pos else None,
                     "z": z,
                     "health": final_health if final_health is not None else 20,
                     "armor": final_armor if final_armor is not None else 0,
@@ -524,6 +546,7 @@ def process_players(players):
                 # Add to dead players display for 20 sec window
                 dead_players_display[name] = {
                     "x": x,
+                    "y": last_pos[2] if last_pos else None,
                     "z": z,
                     "world": final_world if final_world else "Unknown",
                     "health": 0,
