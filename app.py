@@ -14,7 +14,11 @@ from flask import Flask, jsonify, send_file, request
 log = logging.getLogger('werkzeug')
 log.setLevel(logging.ERROR)
 
-API_URL = "http://103.243.173.194:7188/tiles/players.json"
+# Load config from environment variables (set these before running)
+# SQUAREMAP_HOST: e.g. http://your-server-ip:port
+SQUAREMAP_HOST = os.environ.get("SQUAREMAP_HOST", "http://103.243.173.194:7188")
+API_URL = f"{SQUAREMAP_HOST}/tiles/players.json"
+PORT = int(os.environ.get("PORT", 8000))
 
 # === Regions will be loaded from regions.json ===
 regions = []  # List of {"name": "Region Name", "bounds": [xmin, xmax, zmin, zmax]}
@@ -792,4 +796,4 @@ def get_world_bounds():
 
 if __name__ == "__main__":
     load_regions()  # Load regions on startup
-    app.run(host="0.0.0.0", port=8000)
+    app.run(host="0.0.0.0", port=PORT)
