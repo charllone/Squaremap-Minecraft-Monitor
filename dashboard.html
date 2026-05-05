@@ -1038,7 +1038,7 @@ function initMapEditor() {
 
   new SquaremapLayer('', { tileSize: 512, minZoom: -3, maxZoom: 0, noWrap: false }).addTo(map);
   console.log('[MapEditor] Tile layer added, setting view...');
-  map.setView(mcToLatLng(-3500, -5600), -1);
+  map.setView(mcToLatLng(0, 0), -1);
   console.log('[MapEditor] Map ready.');
 
   loadRegions();

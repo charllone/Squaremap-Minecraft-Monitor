@@ -16,7 +16,7 @@ log.setLevel(logging.ERROR)
 
 # Load config from environment variables (set these before running)
 # SQUAREMAP_HOST: e.g. http://your-server-ip:port
-SQUAREMAP_HOST = os.environ.get("SQUAREMAP_HOST", "http://103.243.173.194:7188")
+SQUAREMAP_HOST = os.environ.get("SQUAREMAP_HOST", "http://localhost:7272")
 API_URL = f"{SQUAREMAP_HOST}/tiles/players.json"
 PORT = int(os.environ.get("PORT", 8000))
 
