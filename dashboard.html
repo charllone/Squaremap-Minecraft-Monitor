@@ -818,7 +818,7 @@ function renderElytraEntry(line) {
   const speed = sm ? `${sm[1]} blk/s` : '';
   const bm = body.match(/(\d+)\s+blocks/);
   const blocks = bm ? `${bm[1]} blocks` : '';
-  // Parse negative coords: e.g. -3500,-5600 → -2800,-4900
+  // Parse negative coords: e.g. -100,-200 → -50,-150
   const fm = body.match(/([-\d]+),([-\d]+)\s*\u2192/);
   const fromCoord = fm ? `${fm[1]},${fm[2]}` : '';
   const tm2 = body.match(/\u2192\s*([-\d]+),([-\d]+)/);

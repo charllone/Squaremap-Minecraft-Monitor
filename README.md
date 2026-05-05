@@ -38,7 +38,7 @@ Set the following environment variable before running:
 
 | Variable | Description | Default |
 |---|---|---|
-| `SQUAREMAP_HOST` | Base URL of your Squaremap instance | `http://103.243.173.194:7188` |
+| `SQUAREMAP_HOST` | Base URL of your Squaremap instance | `http://localhost:7272` |
 | `PORT` | Port to run the Flask app on | `8000` |
 
 **Linux / macOS:**
