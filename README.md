@@ -3,9 +3,8 @@
 A real-time Minecraft server player monitoring dashboard built with Flask and Leaflet.js. It polls a [Squaremap](https://github.com/jpenilla/squaremap) API to track and log player activity — logins, logouts, deaths, elytra flights, totem pops, and custom region entries — all displayed on a live map with a web dashboard.
 
 > Designed for servers running Squaremap as their live map plugin.
-
 ---
-
+<img src="src/img/12.png" height="399"> <img src="src/img/13.png" height="399">
 ## Features
 
 - **Live player map** — shows online players, recently logged-out players, and dead players on a Squaremap tile overlay
