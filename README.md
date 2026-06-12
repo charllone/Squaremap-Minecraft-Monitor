@@ -4,7 +4,7 @@ A real-time Minecraft server player monitoring dashboard built with Flask and Le
 
 > Designed for servers running Squaremap as their live map plugin.
 ---
-<img src="src/img/12.png" height="390"> <img src="src/img/13.png" height="390">
+<img src="src/img/12.png" height="111"><img src="src/img/13.png" height="111">
 ## Features
 
 - **Live player map** — shows online players, recently logged-out players, and dead players on a Squaremap tile overlay
